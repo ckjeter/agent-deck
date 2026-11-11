@@ -402,13 +402,31 @@ describe('Phone send reliability', () => {
     render(html`<${SessionChat} sessionId="one" mobileComposer=${true}/>`)
     await screen.findByText('never confirmed')
     expect(screen.queryByText('typed · submission unconfirmed')).toBeNull()
-    screen.getByText('not confirmed · the agent may not have received this')
+    expect(document.querySelector('.session-chat-delivery').textContent.replace(/\s+/g, ' ').trim()).toBe('not confirmed · Edit · Dismiss')
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss unsent message' }))
     await waitFor(() => expect(screen.queryByText('never confirmed')).toBeNull())
     const call = fetch.mock.calls.find(([p]) => p.includes('/send-status/dismiss'))
     expect(call[0]).toBe('/api/sessions/one/send-status/dismiss')
     expect(call[1].method).toBe('POST')
     expect(JSON.parse(call[1].body)).toEqual({ send_id: 'stuck-1' })
+  })
+
+  it('moves an unconfirmed send back into the composer for editing', async () => {
+    let sends = [{ send_id: 'stuck-2', message: 'fix the build', state: 'typed', settled: true, created_at: '2026-11-11T20:49:30Z' }]
+    fetch.mockImplementation(async path => {
+      if (path === '/api/settings') return json({ webMutations: true, readOnly: false })
+      if (path.includes('/send-status/dismiss')) { sends = []; return json({ send_id: 'stuck-2', dismissed: true }) }
+      if (path.includes('/send-status')) return json({ sends, content_version: String(sends.length) })
+      return json({ messages: [{ id: 'a1', role: 'assistant', content: 'Earlier answer', timestamp: '2026-11-11T20:00:00Z' }], content_version: 'v1' })
+    })
+    const onTextChange = vi.fn()
+    render(html`<${SessionChat} sessionId="one" mobileComposer=${true} initialText="also" onTextChange=${onTextChange}/>`)
+    await screen.findByText('fix the build')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit unsent message' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' }).value).toBe('also\n\nfix the build'))
+    expect(onTextChange).toHaveBeenLastCalledWith('also\n\nfix the build')
+    await waitFor(() => expect(document.querySelector('.session-chat-delivery')).toBeNull())
+    expect(fetch.mock.calls.some(([p]) => p.includes('/send-status/dismiss'))).toBe(true)
   })
 
   it('does not show a settled send a second time once its text lands late', async () => {
