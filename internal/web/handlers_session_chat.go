@@ -241,7 +241,7 @@ func (s *Server) handleSessionSendDismiss(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "send_id is required")
 		return
 	}
-	_, _, profile, err := s.loadChatSession(id)
+	inst, _, profile, err := s.loadChatSession(id)
 	if err != nil {
 		writeChatSessionError(w, err)
 		return
@@ -253,7 +253,7 @@ func (s *Server) handleSessionSendDismiss(w http.ResponseWriter, r *http.Request
 	}
 	dir := sendqueue.Dir(profileDir)
 	record, err := sendqueue.Load(dir, req.SendID)
-	if errors.Is(err, sendqueue.ErrUnknown) || (err == nil && record.SessionID != id) {
+	if errors.Is(err, sendqueue.ErrUnknown) || (err == nil && record.SessionID != inst.ID) {
 		writeAPIError(w, http.StatusNotFound, ErrCodeNotFound, "send not found")
 		return
 	}
