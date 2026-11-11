@@ -18,7 +18,7 @@ import { toastsSignal, removeToast } from './toasts.js'
 // them without importing this component; re-exported for existing callers.
 export { addToast, removeToast } from './toasts.js'
 
-function ToastItem({ id, message, type }) {
+function ToastItem({ id, message, type, action }) {
   const borderColor =
     type === 'error'   ? 'var(--tn-red)'
     : type === 'info'  ? 'var(--accent)'
@@ -31,6 +31,10 @@ function ToastItem({ id, message, type }) {
     <div class="toast" data-testid="toast" style=${{ borderColor, position: 'relative', pointerEvents: 'auto' }}>
       <span class="t" style=${{ color: borderColor }}>${sigil}</span>
       <span style="margin-left: 6px;">${message}</span>
+      ${action && html`<button type="button" class="toast-action"
+        onClick=${() => { removeToast(id); action.onClick() }}
+        style="margin-left: 10px; background: transparent; border: 1px solid var(--accent); border-radius: 6px;
+               color: var(--accent); cursor: pointer; padding: 2px 10px; font: inherit; font-weight: 600;">${action.label}</button>`}
       <button type="button"
         onClick=${() => removeToast(id)}
         aria-label="Dismiss"
@@ -50,7 +54,7 @@ export function ToastContainer() {
   // anchors a single instance to the bottom-right, so for multiple we
   // wrap with absolute-positioned stack.
   return html`
-    <div style=${{
+    <div class="toast-stack" style=${{
       position: 'fixed', bottom: '40px', right: '14px', zIndex: 70,
       display: 'flex', flexDirection: 'column', gap: '6px',
       pointerEvents: 'none', maxWidth: '420px',

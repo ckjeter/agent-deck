@@ -1,5 +1,6 @@
 // TerminalPanel.js -- Preact component wrapping xterm.js 6.0.0 terminal lifecycle
 // Ports createTerminalUI, connectWS from app.js (touch handling: terminalTouch.js)
+import { phoneViewportSignal } from './phoneLayout.js'
 import { html } from 'htm/preact'
 import { useEffect, useRef, useCallback, useState } from 'preact/hooks'
 import { effect } from '@preact/signals'
@@ -34,7 +35,8 @@ function wsURLForSession(sessionId, token, ignoreSize) {
   return url.toString()
 }
 
-export function TerminalPanel() {
+export function TerminalPanel({ inputControls = false, bottomLeft }) {
+  const ignoreSize = phoneViewportSignal.value || isMobileDevice()
   const containerRef = useRef(null)
   const ctxRef = useRef(null)  // { terminal, fitAddon, ws, resizeObserver, controller, decoder, reconnectTimer, reconnectAttempt, wsReconnectEnabled, terminalAttached }
   const sessionId = selectedIdSignal.value
@@ -261,6 +263,7 @@ export function TerminalPanel() {
       if (!ctx.ws || ctx.ws.readyState !== WebSocket.OPEN || !ctx.terminalAttached || readOnlySignal.value) return
       ctx.ws.send(JSON.stringify({ type: 'input', data }))
     }
+    ctx.sendInput = sendInput
     const inputDisposable = terminal.onData(sendInput)
 
     // Remap keystrokes the browser/xterm mishandles to the bytes a native
@@ -321,7 +324,7 @@ export function TerminalPanel() {
       ctx.wsReconnectEnabled = true
       wsStateSignal.value = 'connecting'
 
-      const ws = new WebSocket(wsURLForSession(sessionId, token, mobile))
+      const ws = new WebSocket(wsURLForSession(sessionId, token, ignoreSize))
       ws.binaryType = 'arraybuffer'
       ctx.ws = ws
 
@@ -411,7 +414,7 @@ export function TerminalPanel() {
       clearTimeout(resizeTimer)
       cleanup()
     }
-  }, [sessionId, reconnectKey, cleanup])
+  }, [sessionId, reconnectKey, cleanup, ignoreSize])
 
   // #2432: a terminal halted by TMUX_SESSION_NOT_FOUND reattaches by itself
   // once its session runs again, however it was started: the banner, the
@@ -469,6 +472,11 @@ export function TerminalPanel() {
       <div style="flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 14px 16px;">
         <div ref=${containerRef} style="height: 100%; width: 100%; overflow: hidden;"/>
       </div>
+      ${inputControls && html`<div class="phone-terminal-keys">
+        ${bottomLeft}
+        ${[['Esc', '\x1b'], ['Up', '\x1b[A'], ['Down', '\x1b[B'], ['Enter', '\r']].map(([label, bytes]) => html`
+          <button type="button" disabled=${readOnlySignal.value || wsStateSignal.value !== 'connected'} onClick=${() => ctxRef.current?.sendInput(bytes)}>${label}</button>`)}
+      </div>`}
       ${fatalError && html`
         <div role="alert"
              style=${{

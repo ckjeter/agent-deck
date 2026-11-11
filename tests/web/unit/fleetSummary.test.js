@@ -1,6 +1,6 @@
 // The Command Center's conductor-written fleet summary: markdown rendered as
 // vnodes (never innerHTML), plus annotation chips on the session rows.
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { render } from 'preact'
 import { html } from 'htm/preact'
 import { waitFor } from '@testing-library/preact'
@@ -9,12 +9,19 @@ const stateModulePath = '../../../internal/web/static/app/state.js'
 const mdModulePath = '../../../internal/web/static/app/miniMarkdown.js'
 const paneModulePath = '../../../internal/web/static/app/panes/CommandCenterPane.js'
 
+const mounted = []
+
 function mount(vnode) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   render(vnode, container)
+  mounted.push(container)
   return container
 }
+
+afterEach(() => {
+  for (const container of mounted.splice(0)) { render(null, container); container.remove() }
+})
 
 describe('miniMarkdown', () => {
   it('renders headings, lists, bold, code and http links', async () => {

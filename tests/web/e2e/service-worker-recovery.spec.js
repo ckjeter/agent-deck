@@ -12,7 +12,10 @@ self.addEventListener('activate', event => event.waitUntil(self.clients.claim())
 `
 
 test.describe('service worker SSE recovery', () => {
-  test.beforeEach(async ({ request }) => {
+  test.beforeEach(async ({ page, request }) => {
+    if ((page.viewportSize()?.width || 1280) <= 720) {
+      await page.addInitScript(() => localStorage.setItem('agentdeck.phoneDesktop', 'true'))
+    }
     const reset = await request.post('/__fixture/reset')
     expect(reset.status()).toBe(204)
     const clearOutage = await request.post('/__fixture/stream-outage?enabled=false')
