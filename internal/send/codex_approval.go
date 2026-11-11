@@ -1,6 +1,8 @@
 package send
 
 import (
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -20,8 +22,54 @@ type CodexApprovalTarget interface {
 
 // CodexApprovalOptions controls the bounded post-key verification.
 type CodexApprovalOptions struct {
-	VerifyTimeout time.Duration
-	PollInterval  time.Duration
+	VerifyTimeout       time.Duration
+	PollInterval        time.Duration
+	ExpectedFingerprint string
+}
+
+var ErrNoCodexPrompt = errors.New("no active Codex approval prompt found")
+var ErrCodexPromptChanged = errors.New("Codex approval prompt changed before the key could be sent")
+
+// CodexPrompt is a read-only snapshot of a live approval overlay.
+type CodexPrompt struct {
+	Fingerprint string
+	Context     string
+	Options     []CodexPromptOption
+}
+
+type CodexPromptOption struct {
+	Number int    `json:"number"`
+	Choice string `json:"choice"`
+	Label  string `json:"label"`
+	Scope  string `json:"scope"`
+}
+
+// InspectCodexPrompt captures the pane without sending input.
+func InspectCodexPrompt(target CodexApprovalTarget) (*CodexPrompt, error) {
+	if target == nil {
+		return nil, fmt.Errorf("approval target is nil")
+	}
+	prompt, err := captureCodexApprovalPrompt(target)
+	if err != nil || prompt == nil {
+		return nil, err
+	}
+	result := &CodexPrompt{Fingerprint: prompt.fingerprint, Context: prompt.context}
+	for _, option := range prompt.options {
+		scope, choice := "unknown", strconv.Itoa(option.number)
+		label := strings.ToLower(option.label)
+		switch {
+		case strings.HasPrefix(label, "no"):
+			scope, choice = "deny", "deny"
+		case strings.Contains(label, "this session"), strings.Contains(label, "this conversation"):
+			scope = "session"
+		case strings.Contains(label, "don't ask again"), strings.Contains(label, "in the future"):
+			scope = "persistent"
+		case strings.HasPrefix(label, "yes") && (strings.Contains(label, "proceed") || strings.Contains(label, "just this once")):
+			scope, choice = "once", "once"
+		}
+		result.Options = append(result.Options, CodexPromptOption{option.number, choice, option.label, scope})
+	}
+	return result, nil
 }
 
 // CodexApprovalResult describes the option selected and whether the original
@@ -42,6 +90,7 @@ type codexApprovalOption struct {
 
 type codexApprovalPrompt struct {
 	fingerprint string
+	context     string
 	options     []codexApprovalOption
 }
 
@@ -49,7 +98,7 @@ var codexApprovalOptionPattern = regexp.MustCompile(`^\s*(›\s*)?([1-9][0-9]*)\
 
 // ApproveCodexPrompt resolves one currently visible Codex approval menu.
 //
-// choice accepts a displayed option number, or one of "once", "always", and
+// choice accepts a displayed option number, or "once", "deny", "always", or
 // "session". The displayed number is sent as one literal keypress; Enter is
 // intentionally not sent because Codex selects numbered approval options on
 // the digit KeyEvent itself.
@@ -70,7 +119,10 @@ func ApproveCodexPrompt(target CodexApprovalTarget, choice string, opts CodexApp
 		return result, err
 	}
 	if first == nil {
-		return result, fmt.Errorf("no active Codex approval prompt found")
+		return result, ErrNoCodexPrompt
+	}
+	if opts.ExpectedFingerprint != "" && first.fingerprint != opts.ExpectedFingerprint {
+		return result, ErrCodexPromptChanged
 	}
 
 	selected, normalizedChoice, err := selectCodexApprovalOption(first, choice)
@@ -89,7 +141,7 @@ func ApproveCodexPrompt(target CodexApprovalTarget, choice string, opts CodexApp
 		return result, err
 	}
 	if second == nil || second.fingerprint != first.fingerprint {
-		return result, fmt.Errorf("Codex approval prompt changed before the key could be sent")
+		return result, ErrCodexPromptChanged
 	}
 	if _, _, err := selectCodexApprovalOption(second, strconv.Itoa(selected.number)); err != nil {
 		return result, fmt.Errorf("Codex approval option changed before dispatch: %w", err)
@@ -178,6 +230,9 @@ func detectCodexApprovalPrompt(content string) *codexApprovalPrompt {
 		if err != nil {
 			continue
 		}
+		if len(options) > 0 && number <= options[len(options)-1].number {
+			return nil
+		}
 		label := strings.Join(strings.Fields(match[3]), " ")
 		lower := strings.ToLower(label)
 		hasYes = hasYes || strings.HasPrefix(lower, "yes")
@@ -199,17 +254,21 @@ func detectCodexApprovalPrompt(content string) *codexApprovalPrompt {
 		contextStart = start
 	}
 	var fingerprintLines []string
+	var contextLines []string
 	for i := contextStart; i <= lastOptionLine; i++ {
 		line := strings.TrimSpace(lines[i])
 		line = strings.TrimSpace(strings.TrimPrefix(line, "›"))
-		normalized := strings.Join(strings.Fields(line), " ")
-		if normalized != "" {
-			fingerprintLines = append(fingerprintLines, normalized)
+		if line != "" {
+			fingerprintLines = append(fingerprintLines, line)
+			if i < firstOptionLine {
+				contextLines = append(contextLines, strings.TrimSpace(lines[i]))
+			}
 		}
 	}
 
 	return &codexApprovalPrompt{
-		fingerprint: strings.Join(fingerprintLines, "\n"),
+		fingerprint: fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(fingerprintLines, "\n")))),
+		context:     strings.Join(contextLines, "\n"),
 		options:     options,
 	}
 }
@@ -240,6 +299,10 @@ func selectCodexApprovalOption(prompt *codexApprovalPrompt, choice string) (code
 	for _, option := range prompt.options {
 		label := strings.ToLower(option.label)
 		switch normalized {
+		case "deny":
+			if strings.HasPrefix(label, "no") {
+				return option, normalized, nil
+			}
 		case "once":
 			if strings.HasPrefix(label, "yes") &&
 				(strings.Contains(label, "proceed") || strings.Contains(label, "just this once")) {
@@ -259,7 +322,7 @@ func selectCodexApprovalOption(prompt *codexApprovalPrompt, choice string) (code
 			}
 		default:
 			return codexApprovalOption{}, normalized, fmt.Errorf(
-				"invalid approval choice %q (use once, always, session, or a displayed option number)",
+				"invalid approval choice %q (use once, deny, always, session, or a displayed option number)",
 				choice,
 			)
 		}
