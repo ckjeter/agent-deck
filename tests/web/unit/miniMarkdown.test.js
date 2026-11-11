@@ -76,3 +76,24 @@ describe('miniMarkdown conversation constructs', () => {
     expect(c.textContent).toContain('<iframe srcdoc="<script>alert(1)</script>"></iframe>')
   })
 })
+
+describe('miniMarkdown links', () => {
+  it('links bare and angle-bracket URLs without swallowing trailing punctuation', () => {
+    const c = mount('Open https://example.com/a?b=1. Or <https://example.org/x>, then done')
+    const links = [...c.querySelectorAll('a')]
+    expect(links.map(a => a.getAttribute('href'))).toEqual(['https://example.com/a?b=1', 'https://example.org/x'])
+    expect(links.every(a => a.target === '_blank' && a.rel === 'noopener noreferrer')).toBe(true)
+    expect(c.textContent).toBe('Open https://example.com/a?b=1. Or https://example.org/x, then done')
+  })
+
+  it('links URLs inside bold text but not inside code', () => {
+    const c = mount('**see https://example.com/p** and `https://example.com/code`')
+    expect(c.querySelector('strong a').getAttribute('href')).toBe('https://example.com/p')
+    expect(c.querySelector('code a')).toBeNull()
+  })
+
+  it('does not link non-http schemes', () => {
+    const c = mount('javascript:alert(1) and [x](javascript:alert(1))')
+    expect(c.querySelector('a')).toBeNull()
+  })
+})
