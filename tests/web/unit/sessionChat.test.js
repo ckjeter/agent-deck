@@ -47,7 +47,7 @@ describe('Session Chat', () => {
     await screen.findByText('queued · session is busy, will send when idle')
     const call = fetch.mock.calls.find(([, o]) => o?.method === 'POST')
     expect(call[0]).toBe('/api/sessions/one/send')
-    expect(JSON.parse(call[1].body)).toEqual({ text: '你好\nsecond line' })
+    expect(JSON.parse(call[1].body)).toEqual({ text: '你好\nsecond line', client_id: expect.any(String) })
     expect(input.value).toBe('')
   })
 
@@ -329,3 +329,101 @@ it('replaces remote history and clears paging when the transcript becomes unavai
   expect(screen.queryByText('Native answer')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Load earlier' })).toBeNull()
 }, 8000)
+
+describe('Phone send reliability', () => {
+  const json = data => ({ ok: true, status: 200, json: async () => data })
+  beforeEach(() => { for (const key of Object.keys(localStorage)) if (key.startsWith('agentdeck.sendKey')) localStorage.removeItem(key) })
+
+  async function typeAndSend(value) {
+    const input = screen.getByRole('textbox', { name: 'Message' })
+    await waitFor(() => expect(input).not.toBeDisabled())
+    fireEvent.input(input, { target: { value } })
+    const button = screen.getByRole('button', { name: 'Send', exact: true })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+    return input
+  }
+  const posts = () => fetch.mock.calls.filter(([p, o]) => o?.method === 'POST' && p.endsWith('/send')).map(([, o]) => JSON.parse(o.body))
+
+  it('retries a send whose response was lost with the same client id, also after a reload', async () => {
+    let lose = true
+    fetch.mockImplementation(async (path, options) => {
+      if (path === '/api/settings') return json({ webMutations: true, readOnly: false })
+      if (path.includes('/send-status')) return json({ sends: [], content_version: 'q0' })
+      if (options?.method === 'POST') {
+        if (lose) throw new TypeError('Load failed')
+        return { ok: true, json: async () => ({ send_id: 'send-1', state: 'queued' }) }
+      }
+      return json({ messages: [], content_version: 'v1' })
+    })
+    render(html`<${SessionChat} sessionId="one" mobileComposer=${true}/>`)
+    const input = await typeAndSend('only once please')
+    await screen.findByText('Send failed: Load failed')
+    expect(input.value).toBe('only once please')
+    unmount()
+    render(html`<${SessionChat} sessionId="one" mobileComposer=${true} initialText="only once please"/>`)
+    lose = false
+    const again = await screen.findByRole('button', { name: 'Send', exact: true })
+    await waitFor(() => expect(again).not.toBeDisabled())
+    fireEvent.click(again)
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' }).value).toBe(''))
+    const [first, second] = posts()
+    expect(first.client_id).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
+    expect(second.client_id).toBe(first.client_id)
+    await typeAndSend('only once please')
+    await waitFor(() => expect(posts()).toHaveLength(3))
+    expect(posts()[2].client_id).not.toBe(first.client_id)
+  })
+
+  it('gives up on a hung send request so it can be retried', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    fetch.mockImplementation(async (path, options) => {
+      if (path === '/api/settings') return json({ webMutations: true, readOnly: false })
+      if (path.includes('/send-status')) return json({ sends: [], content_version: 'q0' })
+      if (options?.method === 'POST') return new Promise((_, reject) => options.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))
+      return json({ messages: [], content_version: 'v1' })
+    })
+    render(html`<${SessionChat} sessionId="one" mobileComposer=${true}/>`)
+    await typeAndSend('hung request')
+    await screen.findByText('Sending…')
+    await vi.advanceTimersByTimeAsync(20000)
+    await screen.findByText(/^Send failed: /)
+    expect(screen.getByRole('textbox', { name: 'Message' })).not.toBeDisabled()
+  })
+
+  it('labels a send whose delivery watch ended and lets the owner dismiss it', async () => {
+    let sends = [{ send_id: 'stuck-1', message: 'never confirmed', state: 'typed', settled: true, created_at: '2026-11-11T20:49:30Z' }]
+    fetch.mockImplementation(async (path, options) => {
+      if (path === '/api/settings') return json({ webMutations: true, readOnly: false })
+      if (path.includes('/send-status/dismiss')) { sends = []; return json({ send_id: 'stuck-1', dismissed: true }) }
+      if (path.includes('/send-status')) return json({ sends, content_version: String(sends.length) })
+      return json({ messages: [{ id: 'a1', role: 'assistant', content: 'Earlier answer', timestamp: '2026-11-11T20:00:00Z' }], content_version: 'v1' })
+    })
+    render(html`<${SessionChat} sessionId="one" mobileComposer=${true}/>`)
+    await screen.findByText('never confirmed')
+    expect(screen.queryByText('typed · submission unconfirmed')).toBeNull()
+    screen.getByText('not confirmed · the agent may not have received this')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss unsent message' }))
+    await waitFor(() => expect(screen.queryByText('never confirmed')).toBeNull())
+    const call = fetch.mock.calls.find(([p]) => p.includes('/send-status/dismiss'))
+    expect(call[0]).toBe('/api/sessions/one/send-status/dismiss')
+    expect(call[1].method).toBe('POST')
+    expect(JSON.parse(call[1].body)).toEqual({ send_id: 'stuck-1' })
+  })
+
+  it('does not show a settled send a second time once its text lands late', async () => {
+    fetch.mockImplementation(async path => {
+      if (path === '/api/settings') return json({ webMutations: true, readOnly: false })
+      if (path.includes('/send-status')) return json({ sends: [{ send_id: 'late-1', message: 'pi load more', state: 'typed', settled: true, created_at: '2026-11-11T14:51:10.386Z' }], content_version: 'q' })
+      return json({ messages: [
+        { id: 'a0', role: 'assistant', content: 'Before', timestamp: '2026-11-11T14:50:00Z' },
+        { id: 'u1', role: 'user', content: 'pi load more', timestamp: '2026-11-11T14:53:50Z' },
+      ], content_version: 'v1' })
+    })
+    render(html`<${SessionChat} sessionId="one" mobileComposer=${true}/>`)
+    await screen.findByText('Before')
+    await new Promise(r => setTimeout(r, 50))
+    expect(screen.getAllByText('pi load more')).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: 'Dismiss unsent message' })).toBeNull()
+  })
+})
