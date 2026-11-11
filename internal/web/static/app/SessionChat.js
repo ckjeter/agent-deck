@@ -19,7 +19,7 @@ function mergeMessages(old, incoming, removed = []) {
 
 function deliveryLabel(send) {
   if (send.state === 'queued') return 'queued · session is busy, will send when idle'
-  if (send.state === 'typed' && send.settled) return 'not confirmed · the agent may not have received this'
+  if (send.state === 'typed' && send.settled) return 'not confirmed'
   if (send.state === 'typed') return 'typed · submission unconfirmed'
   return send.state + (send.reason ? ' · ' + send.reason : '') + (send.settled ? ' · delivery watch ended' : '')
 }
@@ -318,6 +318,16 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
     } catch (e) { setDeliveryError('Dismiss failed: ' + e.message) }
   }
 
+  // Edit puts the unsent text back in the composer to review and send again:
+  // a not-confirmed send may still have reached the agent, so never resend it blindly.
+  const editUnsent = send => {
+    const old = currentText.current
+    const next = old ? old + '\n\n' + send.message : send.message
+    onTextChange?.(next); setText(next); setStatus('')
+    dismiss(send)
+    input.current?.focus()
+  }
+
   const delivered = new Map(sends.filter(s => s.landed_row_id).map(s => [s.landed_row_id, s]))
   const seen = new Set(messages.map(m => m.id))
   const oldest = messages.find(m => m.timestamp)?.timestamp
@@ -355,9 +365,10 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
             return html`<div key=${m.id} data-message-id=${m.id}>
               ${!segment.tools && m.content && (group.role === 'user' ? html`<p class="session-chat-user-text">${m.content}</p>` : renderMarkdown(m.content))}
               ${segment.tools && html`<p class="session-chat-tools">Tool activity omitted</p>`}
-              ${m.send && html`<p class=${'session-chat-delivery ' + m.send.state} role="status">${deliveryLabel(m.send)}</p>`}
-              ${m.send && m.id === 'send:' + m.send.send_id && dismissable(m.send) && canSend && html`<button type="button" class="session-chat-dismiss"
-                aria-label="Dismiss unsent message" onClick=${() => dismiss(m.send)}>Dismiss</button>`}
+              ${m.send && html`<p class=${'session-chat-delivery ' + m.send.state} role="status">${deliveryLabel(m.send)}${
+                m.id === 'send:' + m.send.send_id && dismissable(m.send) && canSend && html`
+                  ${' · '}<button type="button" class="session-chat-link" aria-label="Edit unsent message" onClick=${() => editUnsent(m.send)}>Edit</button>
+                  ${' · '}<button type="button" class="session-chat-link" aria-label="Dismiss unsent message" onClick=${() => dismiss(m.send)}>Dismiss</button>`}</p>`}
             </div>`
           })}
         </section>`)}
