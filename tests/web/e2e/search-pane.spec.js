@@ -24,6 +24,9 @@ import { test, expect } from '@playwright/test'
 // preseed works on every viewport, including the phone layout where no
 // Search tab button exists.
 async function gotoSearch(page) {
+  if ((page.viewportSize()?.width || 1280) <= 720) {
+    await page.addInitScript(() => localStorage.setItem('agentdeck.phoneDesktop', 'true'))
+  }
   await page.addInitScript(() => {
     localStorage.setItem('agentdeck.tab', JSON.stringify('search'))
   })

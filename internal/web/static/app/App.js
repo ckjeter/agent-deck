@@ -5,7 +5,9 @@
 // selected session (/s/{id}); applyPath is shared by popstate (here) and
 // cold boot (main.js's applyRouteSelection) so the two paths cannot drift.
 import { html } from 'htm/preact'
-import { useEffect } from 'preact/hooks'
+import { useEffect, useLayoutEffect } from 'preact/hooks'
+import { phoneViewportSignal, phoneShellSignal, observePhoneViewport, useDesktopLayout } from './phoneLayout.js'
+import { useLazyComponent } from './lazyModule.js'
 import { AppShell } from './AppShell.js'
 import { selectedIdSignal, selectedGroupSignal, selectSession, selectGroup } from './state.js'
 import { activeTabSignal } from './uiState.js'
@@ -49,6 +51,15 @@ export function applyPath(path) {
 }
 
 export function App() {
+  useEffect(observePhoneViewport, [])
+  const phone = phoneShellSignal.value
+  useLayoutEffect(() => {
+    const root = document.getElementById('app-root')
+    root?.classList.toggle('phone-root', phone)
+    if (!phone && selectedIdSignal.value?.startsWith('remote:')) selectSession(null)
+    return () => root?.classList.remove('phone-root')
+  }, [phone])
+  const PhoneShell = useLazyComponent(phone, () => import('./PhoneShell.js'), 'phoneShell', m => m.PhoneShell)
   // Route sync: update the selection when the browser navigates back/forward.
   useEffect(() => {
     function onPopState() {
@@ -71,6 +82,7 @@ export function App() {
   }, [selectedIdSignal.value, selectedGroupSignal.value])
 
   return html`
-    <${AppShell} />
+    ${phone ? PhoneShell ? html`<${PhoneShell}/>` : html`<p role="status">Loading sessions…</p>` : html`<${AppShell}/>`}
+    ${phoneViewportSignal.value && !phone && html`<button class="phone-return" onClick=${() => useDesktopLayout(false)}>Phone layout</button>`}
   `
 }

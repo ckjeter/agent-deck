@@ -21,7 +21,10 @@ export function authHeaders(extra) {
   return headers
 }
 
-export async function apiFetch(method, path, body) {
+// options.toast === false keeps failures out of the toast stack for callers
+// that show the error inline (the phone action sheets).
+export async function apiFetch(method, path, body, options) {
+  const toast = options?.toast !== false
   const headers = authHeaders()
   let res
   try {
@@ -32,14 +35,14 @@ export async function apiFetch(method, path, body) {
     })
   } catch (err) {
     const msg = 'Network error: ' + (err.message || 'request failed')
-    addToast(msg)
+    if (toast) addToast(msg)
     throw new Error(msg)
   }
   const data = await res.json()
   if (!res.ok) {
     const msg = data?.error?.message || res.statusText
     // Only show toast for mutation errors (not GET requests, which are often background)
-    if (method !== 'GET') addToast(msg)
+    if (method !== 'GET' && toast) addToast(msg)
     throw new Error(msg)
   }
   return data
