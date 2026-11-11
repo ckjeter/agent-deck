@@ -13,6 +13,7 @@ import {
   loadArchivedSessions,
 } from './state.js'
 import { addToast } from './Toast.js'
+import { watchServiceWorkerUpdates } from './swUpdate.js'
 import { initPush } from './push.js'
 import { effect } from '@preact/signals'
 import { phoneShellSignal } from './phoneLayout.js'
@@ -321,6 +322,13 @@ export function applyRouteSelection() {
 
 export function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return
+
+  watchServiceWorkerUpdates({
+    container: navigator.serviceWorker,
+    doc: document,
+    reload: () => location.reload(),
+    cacheKeys: () => (globalThis.caches ? caches.keys() : []),
+  })
 
   function doRegister() {
     navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {
