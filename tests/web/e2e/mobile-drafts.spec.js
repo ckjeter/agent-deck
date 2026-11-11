@@ -86,7 +86,7 @@ test.describe('phone draft handoff and persistence', () => {
     await expect(input).toHaveValue('Unsent 中文\nSecond line')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
     await expect(input).toHaveValue('')
-    expect(sends).toEqual([{ text: 'Unsent 中文\nSecond line' }])
+    expect(sends).toEqual([{ text: 'Unsent 中文\nSecond line', client_id: expect.any(String) }])
     expect(await page.evaluate(key => localStorage.getItem(key), key('fixture', 'sess-001'))).toBeNull()
     await page.reload()
     await expect(input).toHaveValue('')
