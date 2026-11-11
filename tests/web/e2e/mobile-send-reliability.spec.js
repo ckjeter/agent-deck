@@ -56,7 +56,7 @@ test.describe('phone send reliability', () => {
     await page.route(/\/api\/sessions\/[^/]+\/send-status(\?|$)/, route => route.fulfill({ json: { sends, content_version: String(sends.length) } }))
     await page.goto('/s/sess-001')
     await expect(page.getByText('never confirmed')).toBeVisible()
-    await expect(page.getByText('not confirmed · the agent may not have received this')).toBeVisible()
+    await expect(page.locator('.session-chat-delivery')).toHaveText(/^not confirmed · Edit · Dismiss$/)
     const dismiss = page.getByRole('button', { name: 'Dismiss unsent message' })
     const box = await dismiss.boundingBox()
     expect(box.height).toBeGreaterThanOrEqual(32)
