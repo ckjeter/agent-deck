@@ -32,6 +32,11 @@ type codexCell struct {
 	// next one. Codex draws one between its newest user message and the
 	// composer; a picker row drawn right under the composer has none.
 	followedByTranscript bool
+	// start and end are the frame rows the cell occupies, start inclusive and
+	// end inclusive. The cell starts at its "›" row and continues through the
+	// indented rows below it (wrapped input, the model/context footer).
+	start int
+	end   int
 }
 
 // codexCells splits an ANSI-stripped Codex frame into its column-0 "›" cells,
@@ -69,7 +74,7 @@ func codexCells(content string) []codexCell {
 			}
 			break
 		}
-		cells = append(cells, codexCell{text: collapse(strings.Join(body, " "))})
+		cells = append(cells, codexCell{text: collapse(strings.Join(body, " ")), start: i, end: j - 1})
 		i = j - 1
 	}
 	return cells

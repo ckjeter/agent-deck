@@ -19,6 +19,7 @@ import (
 
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/sandboxguard"
+	"github.com/asheshgoplani/agent-deck/internal/send"
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
@@ -1765,8 +1766,8 @@ func parseGeminiOutput(content string) (*ResponseOutput, error) {
 
 // parseCodexOutput parses OpenAI Codex CLI output
 func parseCodexOutput(content string) (*ResponseOutput, error) {
-	// Codex has similar structure - adapt as needed
-	return parseGenericOutput(content, "codex")
+	// Pane captures include the composer and footer below the conversation.
+	return parseGenericOutput(send.StripCodexChrome(content), "codex")
 }
 
 // parseGenericOutput is a fallback parser for unknown tools
