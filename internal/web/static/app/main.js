@@ -14,6 +14,8 @@ import {
 } from './state.js'
 import { addToast } from './Toast.js'
 import { initPush } from './push.js'
+import { effect } from '@preact/signals'
+import { phoneShellSignal } from './phoneLayout.js'
 
 // ---------- Auth token extraction ----------
 
@@ -190,7 +192,7 @@ export function startSSE() {
         // screen reads this feed live, and the menu stream is change-driven
         // (handlers_events.go compares fingerprints), so this costs one
         // request per real change while a panel is open, not a poll.
-        if (selectedGroupSignal.value) loadArchivedSessions()
+        if (selectedGroupSignal.value && !phoneShellSignal.value) loadArchivedSessions()
       }
       markSSEHealthy()
       connectionSignal.value = 'connected'
@@ -236,7 +238,7 @@ export function stopSSE() {
 const _ccSeenCompletions = new Set()
 
 export function startCommandCenterSSE() {
-  if (_ccSource) return
+  if (_ccSource || phoneShellSignal.value) return
 
   const token = authTokenSignal.value
   const url = token
@@ -339,6 +341,12 @@ const root = document.getElementById('app-root')
 if (root) {
   root.style.cssText = 'position:fixed;inset:0;z-index:10;'
   applyRouteSelection()
+  effect(() => {
+    if (phoneShellSignal.value) {
+      _ccSource?.close()
+      _ccSource = null
+    } else startCommandCenterSSE()
+  })
   loadMenu()
   registerServiceWorker()
   initPush()

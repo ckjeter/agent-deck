@@ -143,3 +143,14 @@ describe('applyViewportInsets in a viewport that has no size yet', () => {
     expect(root.style.getPropertyValue('--keyboard-inset')).toBe('284px')
   })
 })
+
+describe('phone visual viewport bounds', () => {
+  it('publishes the visible height and page anchor separately from keyboard overlap', async () => {
+    const root = document.createElement('div')
+    const win = fakeWindow({ innerHeight: 812, visual: { height: 376, offsetTop: 120 } })
+    win.scrollY = 40
+    await apply(win, root)
+    expect(root.style.getPropertyValue('--visual-viewport-height')).toBe('376px')
+    expect(root.style.getPropertyValue('--visual-viewport-top')).toBe('160px')
+  })
+})

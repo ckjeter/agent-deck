@@ -36,10 +36,14 @@ export function applyViewportInsets(win, root) {
   if (!layout) return
 
   const visual = win.visualViewport
+  if (visual && !visual.height) return
   const inset = visual ? Math.max(0, layout - visual.height - visual.offsetTop) : 0
 
   root.style.setProperty('--app-height', `${layout}px`)
   root.style.setProperty('--keyboard-inset', `${inset}px`)
+  root.style.setProperty('--visual-viewport-height', `${visual?.height || layout}px`)
+  root.style.setProperty('--visual-viewport-top', `${visual?.pageTop ?? ((win.scrollY || 0) + (visual?.offsetTop || 0))}px`)
+  root.style.setProperty('--phone-bottom-inset', visual && layout - visual.height > 100 ? '0px' : 'env(safe-area-inset-bottom)')
 }
 
 // Publishes now and on every event that can move either number. Listeners are
@@ -52,6 +56,7 @@ export function installViewportInsets(win, root, signal) {
   publish()
 
   win.addEventListener('resize', publish, opts)
+  win.addEventListener('scroll', publish, opts)
   win.addEventListener('orientationchange', publish, opts)
 
   const visual = win.visualViewport

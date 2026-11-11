@@ -1,160 +1,114 @@
-// e2e/mobile.spec.js -- POSITIVE phone-viewport coverage (chromium-phone).
-//
-// Other specs SKIP on phone; this one runs ONLY there and pins the phone
-// layout contract from app.css `@media (max-width: 720px)` plus
-// MobileTabs.js / FleetPane.js behavior:
-//
-//   - `.mob-tabs` (display:none by default, display:grid ≤720px) is the
-//     bottom navigation: Fleet / Session(terminal) / Watchers / Costs —
-//     the MOBILE_TABS set in MobileTabs.js. Tapping a tab writes
-//     activeTabSignal, the same signal the desktop top-tabs use.
-//   - `.sidebar`, `.rightrail`, `.footer`, `.top-tabs`, `.top-search` are
-//     all display:none on phone. The `.topbar` itself stays (brand).
-//   - With the sidebar hidden, the ONLY phone path to a session is the
-//     Fleet pane's session tiles ([data-testid="fleet-session-tile"],
-//     FleetPane.js onSelect → selectedIdSignal + activeTab='terminal').
-//     There is no hamburger/drawer for the sidebar — grid column is 0 and
-//     the element is display:none (verified in app.css).
-//   - Cold load lands on the Fleet tab (uiState.js activeTabSignal default
-//     'fleet'), so the phone entry surface is usable immediately.
-//
-// Fixture seed (tests/web/fixtures/cmd/web-fixture/main.go seed()):
-// sess-001 "agent-deck" … sess-004 "scratch"; costs endpoints intentionally
-// degrade to 503 → CostDashboard renders "Cost tracking unavailable".
-
 import { test, expect } from '@playwright/test'
 
-async function waitForPhoneMount(page) {
-  // Phone cold load lands on Fleet (default tab) — the fleet pane appearing
-  // means both the app shell mounted and the first menu snapshot arrived
-  // (stat tiles/group cards render from menuModelSignal).
-  await expect(page.locator('[data-testid="fleet-pane"]')).toBeVisible({ timeout: 5000 })
-  await expect(page.locator('[data-testid="fleet-group-card"]').first()).toBeVisible({ timeout: 5000 })
-}
-
-test.describe('mobile phone layout', () => {
-  test.skip(
-    ({ viewport }) => (viewport?.width || 1280) >= 768,
-    'phone-only positive coverage: desktop/tablet layouts are covered by the other specs',
-  )
+test.describe('phone session remote', () => {
+  test.skip(({ viewport }) => (viewport?.width || 1280) > 720, 'phone shell only')
+  test.use({ serviceWorkers: 'block' })
 
   test.beforeEach(async ({ page, request }) => {
     await request.post('/__fixture/reset')
+    await page.route(/\/api\/sessions\/[^/]+\/output/, route => route.fulfill({ json: {
+      messages: [{ id: 'answer', role: 'assistant', content: 'Phone conversation response' }], content_version: 'v1',
+    } }))
+    await page.route(/\/api\/sessions\/[^/]+\/send-status/, route => route.fulfill({ json: { sends: [], content_version: 'q1' } }))
+  })
+
+  test('list and Chat never attach or resize a terminal, including a remembered Terminal preference', async ({ page }) => {
+    const sockets = [], secondary = []
+    page.on('websocket', ws => sockets.push(ws.url()))
+    page.on('request', req => { if (/\/events\/command-center|\/api\/(costs|system)/.test(req.url())) secondary.push(req.url()) })
+    await page.addInitScript(() => localStorage.setItem('agentdeck.sessionView', 'terminal'))
     await page.goto('/')
-    await waitForPhoneMount(page)
+    await expect(page.locator('[data-testid="phone-shell"]')).toBeVisible()
+    await expect(page.locator('#app-root-grid')).toHaveCount(0)
+    await expect(page.locator('[data-testid="mobile-tabs"]')).toHaveCount(0)
+    await page.locator('.phone-session', { hasText: 'agent-deck' }).click()
+    await expect(page.getByText('Phone conversation response', { exact: true })).toBeVisible()
+    await expect(page).toHaveURL(/\/s\/sess-001$/)
+    await page.setViewportSize({ width: 390, height: 600 })
+    await page.waitForTimeout(500)
+    expect(sockets).toEqual([])
+    expect(secondary).toEqual([])
+    await page.reload()
+    await expect(page.getByText('Phone conversation response', { exact: true })).toBeVisible()
+    await page.waitForTimeout(300)
+    expect(sockets).toEqual([])
   })
 
-  test('bottom tab bar is visible with the Command/Fleet/Session/Watchers/Costs set', async ({ page }) => {
-    const bar = page.locator('[data-testid="mobile-tabs"]')
-    await expect(bar).toBeVisible()
-    // Exact tab set + labels from MOBILE_TABS in MobileTabs.js.
-    await expect(bar.locator('.mob-tab')).toHaveCount(5)
-    await expect(page.locator('[data-testid="mobile-tab-command-center"]')).toContainText('Command')
-    await expect(page.locator('[data-testid="mobile-tab-fleet"]')).toContainText('Fleet')
-    await expect(page.locator('[data-testid="mobile-tab-terminal"]')).toContainText('Session')
-    await expect(page.locator('[data-testid="mobile-tab-watchers"]')).toContainText('Watchers')
-    await expect(page.locator('[data-testid="mobile-tab-costs"]')).toContainText('Costs')
-    // Cold load default tab is fleet → its tab carries the `on` class.
-    await expect(page.locator('[data-testid="mobile-tab-fleet"]')).toHaveClass(/\bon\b/)
-  })
-
-  test('tapping each mobile tab switches the active pane', async ({ page }) => {
-    // Session (terminal): no session selected yet → TerminalPanel renders
-    // the EmptyStateDashboard inside the .term-wrap chrome.
-    await page.locator('[data-testid="mobile-tab-terminal"]').click()
-    await expect(page.locator('[data-testid="mobile-tab-terminal"]')).toHaveClass(/\bon\b/)
-    await expect(page.locator('.term-wrap')).toBeVisible()
-    await expect(page.locator('[data-testid="empty-state-dashboard"]')).toBeVisible()
-    await expect(page.locator('[data-testid="fleet-pane"]')).toHaveCount(0)
-
-    // Watchers: StubPane with the documented TUI-only message.
-    await page.locator('[data-testid="mobile-tab-watchers"]').click()
-    await expect(page.locator('[data-testid="mobile-tab-watchers"]')).toHaveClass(/\bon\b/)
-    await expect(page.locator('.chart-card .title', { hasText: 'Watchers' })).toBeVisible()
-    await expect(page.locator('.term-wrap')).toBeHidden()
-
-    // Costs: fixture has no cost store (503) → CostDashboard's degraded card.
-    await page.locator('[data-testid="mobile-tab-costs"]').click()
-    await expect(page.locator('[data-testid="mobile-tab-costs"]')).toHaveClass(/\bon\b/)
-    await expect(page.locator('.chart-card .title', { hasText: 'Cost tracking unavailable' })).toBeVisible()
-
-    // Back to Fleet.
-    await page.locator('[data-testid="mobile-tab-fleet"]').click()
-    await expect(page.locator('[data-testid="mobile-tab-fleet"]')).toHaveClass(/\bon\b/)
-    await expect(page.locator('[data-testid="fleet-pane"]')).toBeVisible()
-  })
-
-  test('desktop chrome is CSS-hidden: top tabs, search, sidebar, right rail, footer', async ({ page }) => {
-    // app.css @media (max-width: 720px) hides these; assert computed
-    // visibility, not mere existence — they all stay in the DOM.
-    await expect(page.locator('.top-tabs')).toBeHidden()
-    await expect(page.locator('.top-search')).toBeHidden()
-    await expect(page.locator('.sidebar')).toBeHidden()
-    await expect(page.locator('[data-testid="right-rail"]')).toBeHidden()
-    await expect(page.locator('.footer')).toBeHidden()
-    // The topbar itself survives (brand block), as does the bottom bar.
-    await expect(page.locator('.topbar')).toBeVisible()
-    await expect(page.locator('.top-brand')).toBeVisible()
-    await expect(page.locator('[data-testid="mobile-tabs"]')).toBeVisible()
-    // Belt and braces: the sidebar is really display:none (no drawer variant).
-    const sidebarDisplay = await page
-      .locator('.sidebar')
-      .evaluate(el => getComputedStyle(el).display)
-    expect(sidebarDisplay).toBe('none')
-  })
-
-  test('phone session-selection flow: Fleet tile → terminal pane', async ({ page }) => {
-    // The sidebar (the desktop selection surface) is display:none on phone
-    // and there is no hamburger, so Fleet tiles are the supported flow.
-    const tile = page.locator('[data-testid="fleet-session-tile"][data-session-id="sess-001"]')
-    await expect(tile).toBeVisible()
-    await tile.click()
-    // FleetPane.onSelect sets selectedIdSignal + activeTab='terminal':
-    // the bottom bar flips to Session and the terminal pane shows.
-    await expect(page.locator('[data-testid="mobile-tab-terminal"]')).toHaveClass(/\bon\b/)
-    await expect(page.locator('.term-wrap')).toBeVisible()
-    // App.js routing mirrors the selection into the URL.
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/s/sess-001')
-  })
-
-  test('terminal pane renders the selected session frame on phone', async ({ page }) => {
-    await page.locator('[data-testid="fleet-session-tile"][data-session-id="sess-002"]').click()
-    await expect(page.locator('.term-wrap')).toBeVisible()
-    // TerminalPanel renders the .term-frame chrome with the session id in
-    // its strip once a session is selected (no EmptyStateDashboard).
-    await expect(page.locator('.term-frame')).toBeVisible()
-    await expect(page.locator('.term-strip .tpath')).toContainText('sess-002')
-    await expect(page.locator('[data-testid="empty-state-dashboard"]')).toHaveCount(0)
-  })
-
-  test('the shell is sized by the measured viewport, not by 100vh', async ({ page }) => {
-    // app.css sized `.app` with `height: 100vh`. On iOS Safari that is the
-    // LARGE viewport -- the height the page would have with the toolbars
-    // hidden -- so while they show, the bottom grid row (this tab bar) lands
-    // under the fold. Chromium cannot reproduce that: here 100vh and
-    // innerHeight agree. What this case pins instead is the wiring the fix
-    // restores -- viewportInsets mounted in the shell, publishing a measured
-    // pixel height into the --app-height that styles.src.css and app.css both
-    // read. Without the producer the variable keeps its `100vh` token and the
-    // first assertion fails.
-    const m = await page.evaluate(() => {
-      const root = getComputedStyle(document.documentElement)
-      const app = document.querySelector('.app')
-      const bar = document.querySelector('[data-testid="mobile-tabs"]')
-      return {
-        appHeight: root.getPropertyValue('--app-height').trim(),
-        keyboardInset: root.getPropertyValue('--keyboard-inset').trim(),
-        innerHeight: window.innerHeight,
-        appBottom: Math.round(app.getBoundingClientRect().bottom),
-        barBottom: Math.round(bar.getBoundingClientRect().bottom),
-      }
+  test('explicit Terminal attaches with ignore-size and closes on return to Chat', async ({ page }) => {
+    const sockets = [], closed = [], sent = []
+    page.on('websocket', ws => {
+      sockets.push(ws.url())
+      ws.on('close', () => closed.push(ws.url()))
+      ws.on('framesent', event => sent.push(String(event.payload)))
     })
+    await page.goto('/s/sess-001')
+    await expect(page.getByText('Phone conversation response', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Session menu', exact: true }).click()
+    await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+    await expect(page.locator('.term-frame')).toBeVisible()
+    const back = page.getByRole('button', { name: 'Back to sessions' })
+    await expect(page.locator('.phone-header button').first()).toHaveAttribute('aria-label', 'Back to sessions')
+    expect(await back.evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
+    await expect.poll(() => sockets.length).toBe(1)
+    expect(new URL(sockets[0]).searchParams.get('ignore-size')).toBe('1')
+    await page.getByRole('button', { name: 'Session menu', exact: true }).click()
+    await page.getByRole('button', { name: 'Return to Chat', exact: true }).click()
+    await expect(page.locator('.term-frame')).toHaveCount(0)
+    await expect.poll(() => closed.length).toBe(1)
+    const count = sent.length
+    await page.setViewportSize({ width: 390, height: 550 })
+    await page.waitForTimeout(500)
+    expect(sockets).toHaveLength(1)
+    expect(sent).toHaveLength(count)
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible()
+  })
 
-    expect(m.appHeight).toBe(`${m.innerHeight}px`)
-    // No software keyboard in a headless run, so the inset must be exactly 0.
-    expect(m.keyboardInset).toBe('0px')
-    // The consequence that matters on a phone: nothing hangs below the fold.
-    expect(m.appBottom).toBeLessThanOrEqual(m.innerHeight)
-    expect(m.barBottom).toBeLessThanOrEqual(m.innerHeight)
+  test('collapse is shared through PATCH, and Back restores the filtered list', async ({ page, request }) => {
+    await page.goto('/')
+    const work = page.locator('[data-group-path="work"] > .phone-group-heading button')
+    await expect(work).toHaveAttribute('aria-expanded', 'true')
+    await work.click()
+    await expect(work).toHaveAttribute('aria-expanded', 'false')
+    await expect.poll(async () => {
+      const snapshot = await (await request.get('/api/menu')).json()
+      return snapshot.items.find(i => i.group?.path === 'work').group.expanded
+    }).toBe(false)
+    await work.click()
+    await expect(work).toHaveAttribute('aria-expanded', 'true')
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Search sessions or groups' }).fill('agent-deck')
+    await page.locator('.phone-session', { hasText: 'agent-deck' }).click()
+    await expect(page.getByText('Phone conversation response', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Back to sessions' }).click()
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('textbox', { name: 'Search sessions or groups' })).toHaveValue('agent-deck')
+  })
+
+  test('More exposes desktop layout and permits returning to the phone shell', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'More', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'More' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeFocused()
+    await page.getByRole('button', { name: 'Use desktop layout' }).click()
+    await expect(page.locator('#app-root-grid')).toBeVisible()
+    await expect(page.locator('[data-testid="phone-shell"]')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Phone layout', exact: true }).click()
+    await expect(page.locator('[data-testid="phone-shell"]')).toBeVisible()
+    await expect(page.locator('#app-root-grid')).toHaveCount(0)
+  })
+
+  test('group deep links reveal the list, and the composer fits the measured viewport', async ({ page }) => {
+    await page.goto('/g/work%2Finnotrade')
+    await expect(page.locator('[data-group-path="work/innotrade"]')).toBeVisible()
+    await expect(page.locator('[data-testid="group-stats-panel"]')).toHaveCount(0)
+    await page.goto('/s/sess-001')
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible()
+    await page.setViewportSize({ width: 393, height: 480 })
+    const dimensions = await page.locator('.phone-shell').evaluate(el => ({
+      bottom: el.getBoundingClientRect().bottom, height: innerHeight,
+      width: document.documentElement.scrollWidth, viewport: innerWidth,
+    }))
+    expect(dimensions.bottom).toBeLessThanOrEqual(dimensions.height)
+    expect(dimensions.width).toBe(dimensions.viewport)
   })
 })

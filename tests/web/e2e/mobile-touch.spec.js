@@ -16,7 +16,7 @@
 //   - A scroll drag and a two-finger gesture do not focus (no keyboard pop
 //     while scrolling or pinching).
 //   - With a session open there is a visible back-to-list control in the
-//     work head, and tapping it returns to the Fleet session list.
+//     phone header, and tapping it returns to the grouped session list.
 
 import { test, expect } from '@playwright/test'
 
@@ -32,10 +32,9 @@ test.describe('phone touch: open session (#2680)', () => {
   test.beforeEach(async ({ page, request }) => {
     await request.post('/__fixture/reset')
     await page.goto('/')
-    const tile = page.locator('[data-testid="fleet-session-tile"][data-session-id="sess-001"]')
-    await expect(tile).toBeVisible({ timeout: 5000 })
-    await tile.tap()
-    await expect(page.locator('[data-testid="mobile-tab-terminal"]')).toHaveClass(/\bon\b/)
+    await page.locator('.phone-session', { hasText: 'agent-deck' }).tap()
+    await page.getByRole('button', { name: 'Session menu', exact: true }).tap()
+    await page.getByRole('button', { name: 'Open Terminal', exact: true }).tap()
     await expect(page.locator('.term-frame')).toBeVisible()
     await expect(page.locator('.xterm-helper-textarea')).toBeAttached()
     // Start every case unfocused.
@@ -120,12 +119,11 @@ test.describe('phone touch: open session (#2680)', () => {
   })
 
   test('a visible back-to-list control returns to the session list', async ({ page }) => {
-    const back = page.locator('[data-testid="mobile-back-to-list"]')
+    const back = page.getByRole('button', { name: 'Back to sessions' })
     await expect(back).toBeVisible()
     await back.tap()
-    await expect(page.locator('[data-testid="mobile-tab-fleet"]')).toHaveClass(/\bon\b/)
-    await expect(page.locator('[data-testid="fleet-pane"]')).toBeVisible()
-    await expect(page.locator('[data-testid="fleet-session-tile"]').first()).toBeVisible()
+    await expect(page.locator('.phone-sessions')).toBeVisible()
+    await expect(page.locator('.phone-session').first()).toBeVisible()
     // On the list itself the control is gone.
     await expect(back).toBeHidden()
   })

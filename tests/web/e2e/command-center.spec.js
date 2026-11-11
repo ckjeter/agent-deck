@@ -17,6 +17,9 @@
 import { test, expect } from '@playwright/test'
 
 async function openCommandCenter(page) {
+  if ((page.viewportSize()?.width || 1280) <= 720) {
+    await page.addInitScript(() => localStorage.setItem('agentdeck.phoneDesktop', 'true'))
+  }
   await page.goto('/')
   // The top tab strip is hidden on phone-class viewports (≤720px), which use
   // the bottom MobileTabs bar instead. Click whichever control is visible so

@@ -30,7 +30,10 @@ async function showBoardToggle(page) {
 }
 
 test.describe('fleet pane', () => {
-  test.beforeEach(async ({ request }) => {
+  test.beforeEach(async ({ page, request }) => {
+    if ((page.viewportSize()?.width || 1280) <= 720) {
+      await page.addInitScript(() => localStorage.setItem('agentdeck.phoneDesktop', 'true'))
+    }
     await request.post('/__fixture/reset')
   })
 

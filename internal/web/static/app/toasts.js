@@ -51,9 +51,13 @@ function pushToHistory(toast) {
   } catch (_) { /* incognito */ }
 }
 
-export function addToast(message, type) {
+// options.action ({ label, onClick }) adds one button to the toast, and
+// options.timeoutMs overrides the 5s auto-dismiss (used by the phone's
+// delete Undo, which must last exactly as long as the server's window).
+export function addToast(message, type, options) {
   const resolvedType = type || 'error'
   const newToast = { id: ++nextId, message, type: resolvedType, createdAt: Date.now() }
+  if (options?.action) newToast.action = options.action
   let next = [...toastsSignal.value, newToast]
   if (next.length > 3) {
     const nonErrorIdx = next.findIndex(t => t.type !== 'error')
@@ -67,12 +71,13 @@ export function addToast(message, type) {
   }
   toastsSignal.value = next
   if (newToast.type !== 'error') {
-    setTimeout(() => removeToast(newToast.id), AUTO_DISMISS_MS)
+    setTimeout(() => removeToast(newToast.id), options?.timeoutMs ?? AUTO_DISMISS_MS)
   }
+  return newToast.id
 }
 
 export function removeToast(id) {
   const removed = toastsSignal.value.find(t => t.id === id)
-  if (removed) pushToHistory(removed)
+  if (removed) pushToHistory(removed.action ? { ...removed, action: undefined } : removed)
   toastsSignal.value = toastsSignal.value.filter(t => t.id !== id)
 }
