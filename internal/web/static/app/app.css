@@ -1510,6 +1510,7 @@ body[data-rail="hidden"] .rightrail { display: none; }
 @keyframes session-tool-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .session-tool-live-dot { animation: none; opacity: .8; } }
 .session-chat-delivery.failed, .session-chat-delivery.cancelled { color: var(--danger, #f7768e); }
+.session-chat-dismiss { min-height: 32px; margin-top: 4px; padding: 4px 12px; border: 1px solid var(--border, currentColor); border-radius: 999px; background: transparent; color: inherit; font-size: 13px; }
 .session-chat-earlier { display: block; margin: 0 auto 12px; padding: 10px 16px; border: 1px solid var(--border); border-radius: 6px; }
 .markdown-code { position: relative; max-width: 100%; }
 .markdown-code-copy { display: none; }

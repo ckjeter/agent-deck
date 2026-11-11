@@ -19,9 +19,30 @@ function mergeMessages(old, incoming, removed = []) {
 
 function deliveryLabel(send) {
   if (send.state === 'queued') return 'queued · session is busy, will send when idle'
+  if (send.state === 'typed' && send.settled) return 'not confirmed · the agent may not have received this'
   if (send.state === 'typed') return 'typed · submission unconfirmed'
   return send.state + (send.reason ? ' · ' + send.reason : '') + (send.settled ? ' · delivery watch ended' : '')
 }
+
+// A finished send that never landed: the worker will not touch it again.
+const dismissable = send => send.state !== 'landed' && (send.settled || send.state === 'failed' || send.state === 'cancelled')
+
+// The idempotency key of the message being sent, kept with its text so a
+// retry after a lost response or a reload reuses it and is not queued twice.
+const sendKeyPrefix = 'agentdeck.sendKey.v1:'
+function sendKeyFor(path, text) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(sendKeyPrefix + path))
+    if (saved?.text === text && typeof saved.key === 'string') return saved.key
+  } catch (_) {}
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  const key = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+  try { localStorage.setItem(sendKeyPrefix + path, JSON.stringify({ text, key })) } catch (_) {}
+  return key
+}
+function clearSendKey(path) { try { localStorage.removeItem(sendKeyPrefix + path) } catch (_) {} }
+
+const SEND_TIMEOUT_MS = 15000
 
 const TOOL_ICONS = { bash: '>', edit: '±', read: 'R', subagent: '@', todo: '#', question: '?', skill: 'S', thinking: '…', tool: 'T' }
 
@@ -256,15 +277,24 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
     setSending(true); setStatus('Sending…')
     try {
       let result
+      const body = remote ? { text } : { text, client_id: sendKeyFor(path, text) }
       if (mobileComposer && !remote) {
-        const res = await fetch(path + '/send', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ text }) })
-        result = await res.json()
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS)
+        let res
+        try {
+          res = await fetch(path + '/send', { method: 'POST', headers: authHeaders(), body: JSON.stringify(body), signal: controller.signal })
+          result = await res.json()
+        } catch (e) {
+          throw controller.signal.aborted ? new Error('no response, sending again will not duplicate it') : e
+        } finally { clearTimeout(timeout) }
         if (!res.ok) {
           const failure = new Error(result?.error?.message || 'Unable to send message')
           failure.code = result?.error?.code
           throw failure
         }
-      } else result = await apiFetch('POST', path + '/send', { text })
+      } else result = await apiFetch('POST', path + '/send', body)
+      if (!remote) clearSendKey(path)
       if (remote) remoteSends.current.add(result.send_id)
       setSends(old => [...old.filter(s => s.send_id !== result.send_id), { message: text, created_at: new Date().toISOString(), ...result }])
       setStatus(result.warning || '')
@@ -280,10 +310,21 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
     }
   }
 
+  const dismiss = async send => {
+    setSends(old => old.filter(s => s.send_id !== send.send_id))
+    if (remote) { remoteSends.current.delete(send.send_id); return }
+    try {
+      await apiFetch('POST', path + '/send-status/dismiss', { send_id: send.send_id })
+    } catch (e) { setDeliveryError('Dismiss failed: ' + e.message) }
+  }
+
   const delivered = new Map(sends.filter(s => s.landed_row_id).map(s => [s.landed_row_id, s]))
   const seen = new Set(messages.map(m => m.id))
   const oldest = messages.find(m => m.timestamp)?.timestamp
-  const pending = sends.filter(s => !seen.has(s.landed_row_id) &&
+  // A send whose watch ended may still land later; its row then shows it.
+  const landedLate = s => dismissable(s) && messages.some(m => m.role === 'user' && m.timestamp && m.timestamp >= s.created_at &&
+    (m.content || '').trim() === (s.message || '').trim())
+  const pending = sends.filter(s => !seen.has(s.landed_row_id) && !landedLate(s) &&
     (s.state !== 'landed' || !oldest || s.created_at >= oldest))
   const rows = [...messages.filter(m => mobileComposer || m.tool?.kind !== 'thinking').map(m => ({ ...m, send: delivered.get(m.id) })),
     ...pending.map(s => ({ id: 'send:' + s.send_id, role: 'user', content: s.message, send: s }))]
@@ -315,6 +356,8 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
               ${!segment.tools && m.content && (group.role === 'user' ? html`<p class="session-chat-user-text">${m.content}</p>` : renderMarkdown(m.content))}
               ${segment.tools && html`<p class="session-chat-tools">Tool activity omitted</p>`}
               ${m.send && html`<p class=${'session-chat-delivery ' + m.send.state} role="status">${deliveryLabel(m.send)}</p>`}
+              ${m.send && m.id === 'send:' + m.send.send_id && dismissable(m.send) && canSend && html`<button type="button" class="session-chat-dismiss"
+                aria-label="Dismiss unsent message" onClick=${() => dismiss(m.send)}>Dismiss</button>`}
             </div>`
           })}
         </section>`)}

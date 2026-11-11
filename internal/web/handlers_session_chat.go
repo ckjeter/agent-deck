@@ -3,8 +3,10 @@ package web
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -87,6 +89,9 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request, id st
 	}
 	var req struct {
 		Text string `json:"text"`
+		// ClientID is the phone's idempotency key for this message: a retry
+		// of a POST whose response was lost carries the same one.
+		ClientID string `json:"client_id"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -95,6 +100,10 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request, id st
 	}
 	if strings.TrimSpace(req.Text) == "" {
 		writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "text is required")
+		return
+	}
+	if req.ClientID != "" && !validChatClientID.MatchString(req.ClientID) {
+		writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid client_id")
 		return
 	}
 	inst, _, profile, err := s.loadChatSession(id)
@@ -113,12 +122,19 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request, id st
 	}
 	dir := sendqueue.Dir(profileDir)
 	now := time.Now()
-	record, err := sendqueue.Enqueue(profile, dir, sendqueue.Send{
+	queued := sendqueue.Send{
 		SessionID: inst.ID, SessionTitle: inst.Title, Tool: inst.Tool,
 		ClaudeSessionID: inst.ClaudeSessionID, Running: true,
 		Message: req.Text, Sender: "web", Deadline: now.Add(sendqueue.DefaultRetryBudget),
 		RequireInputPrompt: true, IgnoreBudget: true,
-	}, now)
+	}
+	var record *sendqueue.Record
+	if req.ClientID != "" {
+		queued.Key = "web-send:" + inst.ID + ":" + req.ClientID
+		record, _, err = sendqueue.EnqueueOnce(profile, dir, queued, now)
+	} else {
+		record, err = sendqueue.Enqueue(profile, dir, queued, now)
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to queue message")
 		return
@@ -177,7 +193,7 @@ func (s *Server) handleSessionSendStatus(w http.ResponseWriter, r *http.Request,
 	sends := make([]status, 0)
 	// Keep active deliveries even when many newer sends have already finished.
 	for i, record := range records {
-		if i < len(records)-chatHistoryPageSize && record.Final() {
+		if record.Dismissed || (i < len(records)-chatHistoryPageSize && record.Final()) {
 			continue
 		}
 		sends = append(sends, status{record.SendID, record.State, record.Message, record.Reason, record.TargetStatus,
@@ -194,4 +210,64 @@ func (s *Server) handleSessionSendStatus(w http.ResponseWriter, r *http.Request,
 		Sends   []status `json:"sends"`
 		Version string   `json:"content_version"`
 	}{sends, version})
+}
+
+var validChatClientID = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
+
+// handleSessionSendDismiss hides a finished send that never landed (failed,
+// cancelled, or typed/submitted with its delivery watch over) from the chat.
+// It only marks the record: delivery is already over, and text left in the
+// agent's composer stays there for the composer takeover to move or discard.
+func (s *Server) handleSessionSendDismiss(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, ErrCodeMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.checkMutationsAllowed(w) {
+		return
+	}
+	if s.cfg.ReadOnly {
+		writeAPIError(w, http.StatusForbidden, ErrCodeForbidden, "web server is read-only")
+		return
+	}
+	if !s.checkMutationRateLimit(w) {
+		return
+	}
+	var req struct {
+		SendID string `json:"send_id"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SendID == "" {
+		writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "send_id is required")
+		return
+	}
+	_, _, profile, err := s.loadChatSession(id)
+	if err != nil {
+		writeChatSessionError(w, err)
+		return
+	}
+	profileDir, err := session.GetProfileDir(profile)
+	if err != nil {
+		writeChatSessionError(w, err)
+		return
+	}
+	dir := sendqueue.Dir(profileDir)
+	record, err := sendqueue.Load(dir, req.SendID)
+	if errors.Is(err, sendqueue.ErrUnknown) || (err == nil && record.SessionID != id) {
+		writeAPIError(w, http.StatusNotFound, ErrCodeNotFound, "send not found")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to read send")
+		return
+	}
+	if !record.Final() || record.State == sendqueue.StateLanded {
+		writeAPIError(w, http.StatusConflict, "SEND_ACTIVE", "only a finished send that did not land can be dismissed")
+		return
+	}
+	if _, err := sendqueue.Update(dir, record.SendID, time.Now(), func(r *sendqueue.Record) { r.Dismissed = true }); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to dismiss send")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"send_id": record.SendID, "dismissed": true})
 }

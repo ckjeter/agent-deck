@@ -143,6 +143,10 @@ func (s *Server) handleSessionByAction(w http.ResponseWriter, r *http.Request) {
 		s.handleSessionOutput(w, r, sessionID)
 		return
 	}
+	if action == "send-status/dismiss" {
+		s.handleSessionSendDismiss(w, r, sessionID)
+		return
+	}
 	if action == "send-status" {
 		s.handleSessionSendStatus(w, r, sessionID)
 		return

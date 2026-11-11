@@ -115,6 +115,9 @@ type Record struct {
 	// WaitWhileStopped: the worker waits for a target that is not running,
 	// until the deadline if there is one, instead of failing the send.
 	WaitWhileStopped bool `json:"wait_while_stopped,omitempty"`
+	// Dismissed: the person hid this finished, unlanded send from the web
+	// chat. It changes nothing about delivery.
+	Dismissed bool `json:"dismissed,omitempty"`
 }
 
 // Final reports whether the worker is done with the record.

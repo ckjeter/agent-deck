@@ -463,3 +463,128 @@ func TestSessionChatHistoryToolProgress(t *testing.T) {
 		t.Fatalf("tool body leaked: %s", rr.Body.String())
 	}
 }
+
+// A phone retries a send whose response it never saw (iOS suspended the PWA,
+// the network dropped): the retry carries the same client_id and must not
+// queue the message a second time.
+func TestSessionChatSendIsIdempotentPerClientID(t *testing.T) {
+	srv := newChatTestServer(t)
+	inst, _, _, err := srv.loadChatSession("chat-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmuxSession := inst.GetTmuxSession()
+	if err := tmuxSession.Start("sleep 60"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tmuxSession.Kill() })
+	srv.startChatWorker = func(string, string) error { return nil }
+	srv.mutationLimiter = rate.NewLimiter(rate.Inf, 0)
+	send := func(body string) map[string]any {
+		t.Helper()
+		rr := chatRequest(srv, "POST", "/api/sessions/chat-session/send", body)
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	first := send(`{"text":"only once","client_id":"phone-key-1"}`)
+	retry := send(`{"text":"only once","client_id":"phone-key-1"}`)
+	other := send(`{"text":"only once","client_id":"phone-key-2"}`)
+	if first["send_id"] == "" || retry["send_id"] != first["send_id"] {
+		t.Fatalf("retry queued a new send: first=%v retry=%v", first, retry)
+	}
+	if other["send_id"] == first["send_id"] {
+		t.Fatalf("a new client id reused the old send: %v", other)
+	}
+	dir, err := session.GetProfileDir("_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := sendqueue.List(sendqueue.Dir(dir), inst.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued := 0
+	for _, r := range records {
+		if r.Message == "only once" {
+			queued++
+		}
+	}
+	if queued != 2 {
+		t.Fatalf("want 2 queued records, got %d", queued)
+	}
+	rr := chatRequest(srv, "POST", "/api/sessions/chat-session/send", `{"text":"x","client_id":"../bad id"}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("invalid client id: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// A send whose delivery watch ended without proof (typed, settled) or that
+// failed can be dismissed from the chat; it then leaves send-status. A send
+// still in flight or one that landed cannot.
+func TestSessionChatDismissFinishedSend(t *testing.T) {
+	srv := newChatTestServer(t)
+	dir, err := session.GetProfileDir("_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	qdir := sendqueue.Dir(dir)
+	enqueue := func(msg string, fn func(*sendqueue.Record)) string {
+		t.Helper()
+		rec, err := sendqueue.Enqueue("_test", qdir, sendqueue.Send{SessionID: "chat-session", Message: msg, Sender: "web", Running: true}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sendqueue.Update(qdir, rec.SendID, time.Now(), fn); err != nil {
+			t.Fatal(err)
+		}
+		return rec.SendID
+	}
+	stuck := enqueue("stuck", func(r *sendqueue.Record) { r.State, r.Settled = sendqueue.StateTyped, true })
+	failed := enqueue("failed", func(r *sendqueue.Record) { r.State = sendqueue.StateFailed })
+	typing := enqueue("typing", func(r *sendqueue.Record) { r.State = sendqueue.StateTyped })
+	landed := enqueue("landed", func(r *sendqueue.Record) { r.State, r.LandedRowID = sendqueue.StateLanded, "row" })
+	other, err := sendqueue.Enqueue("_test", qdir, sendqueue.Send{SessionID: "other-session", Message: "other", Sender: "web", Running: true}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sendqueue.Update(qdir, other.SendID, time.Now(), func(r *sendqueue.Record) { r.State = sendqueue.StateFailed }); err != nil {
+		t.Fatal(err)
+	}
+	dismiss := func(id string) int {
+		return chatRequest(srv, "POST", "/api/sessions/chat-session/send-status/dismiss", `{"send_id":"`+id+`"}`).Code
+	}
+	for id, want := range map[string]int{stuck: 200, failed: 200, typing: 409, landed: 409, other.SendID: 404, "01M000000000000000000000ZZ": 404} {
+		if got := dismiss(id); got != want {
+			t.Errorf("dismiss %s: status=%d want %d", id, got, want)
+		}
+	}
+	rr := chatRequest(srv, "GET", "/api/sessions/chat-session/send-status", "")
+	var body struct {
+		Sends []struct {
+			SendID string `json:"send_id"`
+		}
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, s := range body.Sends {
+		listed[s.SendID] = true
+	}
+	if listed[stuck] || listed[failed] || !listed[typing] || !listed[landed] {
+		t.Fatalf("send-status after dismiss: %s", rr.Body.String())
+	}
+	if rr := chatRequest(srv, "GET", "/api/sessions/chat-session/send-status/dismiss", ""); rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET dismiss: %d", rr.Code)
+	}
+	srv.cfg.ReadOnly = true
+	if got := dismiss(failed); got != http.StatusForbidden {
+		t.Fatalf("read-only dismiss: %d", got)
+	}
+}
