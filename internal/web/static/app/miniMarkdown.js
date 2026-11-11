@@ -1,22 +1,32 @@
 import { html } from 'htm/preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 
-const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g
+const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|<https?:\/\/[^\s<>]+>|https?:\/\/[^\s<>`]+)/gi
+
+function link(href, label) {
+  return html`<a href=${href} target="_blank" rel="noopener noreferrer">${label}</a>`
+}
 
 function inline(text) {
   const out = []
   let last = 0
   for (const m of text.matchAll(INLINE)) {
     if (m.index > last) out.push(text.slice(last, m.index))
-    const tok = m[0]
+    let tok = m[0]
     if (tok.startsWith('**')) {
-      out.push(html`<strong>${tok.slice(2, -2)}</strong>`)
+      out.push(html`<strong>${inline(tok.slice(2, -2))}</strong>`)
     } else if (tok.startsWith('`')) {
       out.push(html`<code>${tok.slice(1, -1)}</code>`)
+    } else if (tok.startsWith('<')) {
+      out.push(link(tok.slice(1, -1), tok.slice(1, -1)))
+    } else if (/^https?:/i.test(tok)) {
+      const trail = tok.match(/[.,;:!?)\]'"]+$/)
+      if (trail) tok = tok.slice(0, -trail[0].length)
+      out.push(link(tok, tok))
     } else {
       const [, label, href] = tok.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/)
       out.push(/^https?:\/\//i.test(href)
-        ? html`<a href=${href} target="_blank" rel="noopener noreferrer">${label}</a>`
+        ? link(href, label)
         : tok)
     }
     last = m.index + tok.length
