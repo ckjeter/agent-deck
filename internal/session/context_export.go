@@ -344,6 +344,26 @@ type piSessionArtifact struct {
 	SessionID string
 }
 
+// PiChatTranscript resolves the exact Pi session document this instance's
+// conversation lives in, plus the opaque content version of that file for
+// if-version polling. Resolution is the exact-identity one (a persisted
+// PiSessionID/PiSessionPath pair or one uniquely validated JSONL in the
+// instance's private Pi directory), so an absent or ambiguous identity is
+// an error and the caller falls back to the latest-response read.
+func PiChatTranscript(inst *Instance) (path, version string, err error) {
+	switch {
+	case inst == nil || inst.Tool != "pi":
+		return "", "", fmt.Errorf("Pi chat transcript requires a Pi instance")
+	case !inst.TranscriptIsResolvableLocally():
+		return "", "", fmt.Errorf("session %q is remote; transcript is not locally readable", inst.ID)
+	}
+	artifact, err := resolveExactPiSessionArtifact(inst)
+	if err != nil {
+		return "", "", err
+	}
+	return artifact.Path, transcriptContentVersion(artifact.Path), nil
+}
+
 // resolveExactPiSessionArtifact resolves only a persisted Pi identity/path or
 // one uniquely validated JSONL in this instance's private Pi directory. Pi
 // v0.85+ generates timestamped filenames, so session.jsonl is legacy-only and

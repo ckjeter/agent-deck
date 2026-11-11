@@ -139,6 +139,27 @@ func (s *Server) handleSessionByAction(w http.ResponseWriter, r *http.Request) {
 		action = parts[1]
 	}
 
+	if action == "output" {
+		s.handleSessionOutput(w, r, sessionID)
+		return
+	}
+	if action == "send-status" {
+		s.handleSessionSendStatus(w, r, sessionID)
+		return
+	}
+	if action == "send" {
+		s.handleSessionSend(w, r, sessionID)
+		return
+	}
+	if action == "input-prompt" || action == "input-prompt/choice" {
+		s.handleInputPrompt(w, r, sessionID, action == "input-prompt/choice")
+		return
+	}
+	if action == "composer" || action == "composer/take" {
+		s.handleComposer(w, r, sessionID, action == "composer/take")
+		return
+	}
+
 	// Skills sub-routes: /api/sessions/{id}/skills            (GET)
 	//                    /api/sessions/{id}/skills/{name}     (POST/DELETE)
 	if action == "skills" || strings.HasPrefix(action, "skills/") {

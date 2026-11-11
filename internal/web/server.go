@@ -15,6 +15,7 @@ import (
 
 	"github.com/asheshgoplani/agent-deck/internal/costs"
 	"github.com/asheshgoplani/agent-deck/internal/logging"
+	"github.com/asheshgoplani/agent-deck/internal/send"
 	"github.com/asheshgoplani/agent-deck/internal/session"
 	"golang.org/x/time/rate"
 )
@@ -70,12 +71,19 @@ type Server struct {
 	menuSubscribersMu sync.Mutex
 	menuSubscribers   map[chan struct{}]struct{}
 
-	costStore       *costs.Store
-	mutator         SessionMutator
-	skills          SkillsService
-	mcpMgr          MCPManager
-	remoteFleet     RemoteFleetLoader
-	mutationLimiter *rate.Limiter
+	costStore           *costs.Store
+	startChatWorker     func(profile, sessionID string) error
+	inputPromptMu       sync.Mutex
+	inputPromptAttempts map[string]bool
+	inputPromptTarget   func(*session.Instance) send.CodexApprovalTarget
+	inputPromptVerify   send.CodexApprovalOptions
+	composerTarget      func(*session.Instance) send.CodexApprovalTarget
+	mutator             SessionMutator
+	skills              SkillsService
+	mcpMgr              MCPManager
+	remoteFleet         RemoteFleetLoader
+	remoteChatRunner    func(string) (remoteChatRunner, error)
+	mutationLimiter     *rate.Limiter
 
 	// hookStatusLoader returns the latest hook payload for every instance
 	// whose hook file is present on disk. Defaults to defaultLoadHookStatuses
@@ -164,6 +172,7 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("/api/session/", s.handleSessionByID)
 	mux.HandleFunc("/api/sessions", s.handleSessionsCollection)
 	mux.HandleFunc("/api/remotes", s.handleRemotes)
+	mux.HandleFunc("/api/remotes/", s.handleRemoteSessionChat)
 	// /api/sessions/undelete is a collection-level action (Chrome-style
 	// ctrl+z undo). Register before the subtree pattern so Go 1.22+
 	// ServeMux precedence routes it cleanly instead of treating

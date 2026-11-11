@@ -144,6 +144,18 @@ func main() {
 			http.Error(w, "fixture stream outage", status)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/composer") && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(map[string]any{"visible": false, "draft": "", "foreign": false, "suggestion": false, "observed_at": time.Now().UTC().Format(time.RFC3339Nano)})
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/composer/take") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "DRAFT_CHANGED", "message": "fixture has no native composer"}})
+			return
+		}
 		handler.ServeHTTP(w, r)
 	}))
 	mux.Handle("/", handler)
@@ -805,7 +817,7 @@ func (s *fixtureStore) FinishWorktree(id string, opts web.WorktreeFinishOptions)
 	}, nil
 }
 
-func (s *fixtureStore) transition(id string, to session.Status) error {
+func (s *fixtureStore) transition(id string, to session.Status, substates ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[id]
@@ -813,6 +825,9 @@ func (s *fixtureStore) transition(id string, to session.Status) error {
 		return fmt.Errorf("session %q not found", id)
 	}
 	sess.Status = to
+	if len(substates) > 0 {
+		sess.Substate = substates[0]
+	}
 	return nil
 }
 
@@ -885,9 +900,21 @@ func (s *fixtureStore) adminHandler() http.Handler {
 			return
 		}
 		switch action {
+		case "substate":
+			s.mu.Lock()
+			sess, ok := s.sessions[id]
+			if ok {
+				sess.Substate = r.URL.Query().Get("to")
+			}
+			s.mu.Unlock()
+			if !ok {
+				http.Error(w, "session not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 		case "status":
 			to := session.Status(r.URL.Query().Get("to"))
-			if err := s.transition(id, to); err != nil {
+			if err := s.transition(id, to, r.URL.Query().Get("substate")); err != nil {
 				http.Error(w, err.Error(), http.StatusNotFound)
 				return
 			}
