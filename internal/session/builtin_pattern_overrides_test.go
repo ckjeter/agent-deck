@@ -61,3 +61,39 @@ func BenchmarkMergeToolPatternsBuiltinOverrides(b *testing.B) {
 		MergeToolPatterns("pi")
 	}
 }
+
+func TestMergeToolPatternsBuiltinOverridesWithoutDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	ClearUserConfigCache()
+	t.Cleanup(ClearUserConfigCache)
+
+	cfg := &UserConfig{Tools: map[string]ToolDef{
+		"crush":  {BusyPatterns: []string{"custom-crush-busy"}, CompatibleWith: "claude"},
+		"hermes": {PromptPatternsExtra: []string{"custom-hermes-prompt"}},
+		"aider":  {Command: "aider --no-git"},
+	}}
+	if err := SaveUserConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	ClearUserConfigCache()
+
+	crush := MergeToolPatterns("crush")
+	if crush == nil || !slices.Equal(crush.BusyPatterns, []string{"custom-crush-busy"}) {
+		t.Fatalf("crush busy patterns were dropped: %#v", crush)
+	}
+	if len(crush.PromptPatterns) != 0 || len(crush.WhimsicalWords) != 0 {
+		t.Fatalf("crush must not inherit compatible_with defaults: %#v", crush)
+	}
+	hermes := MergeToolPatterns("hermes")
+	if hermes == nil || !slices.Equal(hermes.PromptPatterns, []string{"custom-hermes-prompt"}) {
+		t.Fatalf("hermes prompt extras were dropped: %#v", hermes)
+	}
+	if aider := MergeToolPatterns("aider"); aider != nil {
+		t.Fatalf("aider without pattern fields must keep nil patterns: %#v", aider)
+	}
+	if GetToolDef("crush") != nil || GetToolDef("hermes") != nil || GetToolDef("aider") != nil {
+		t.Fatal("built-in pattern overrides must not register custom tools")
+	}
+}

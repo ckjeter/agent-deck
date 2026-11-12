@@ -5242,10 +5242,21 @@ func GetToolIcon(toolName string) string {
 func MergeToolPatterns(toolName string) *tmux.RawPatterns {
 	defaults := tmux.DefaultRawPatterns(toolName)
 	toolDef := GetToolDef(toolName)
-	if toolDef == nil && defaults != nil {
+	builtinEntry := false
+	if toolDef == nil {
 		if config, err := LoadUserConfig(); err == nil && config != nil {
 			if configured, ok := config.Tools[toolName]; ok {
-				toolDef = &configured
+				// A built-in takes only the pattern fields from its [tools.<name>]
+				// entry, so compatible_with and the rest keep their meaning.
+				toolDef = &ToolDef{
+					BusyPatterns:        configured.BusyPatterns,
+					PromptPatterns:      configured.PromptPatterns,
+					SpinnerChars:        configured.SpinnerChars,
+					BusyPatternsExtra:   configured.BusyPatternsExtra,
+					PromptPatternsExtra: configured.PromptPatternsExtra,
+					SpinnerCharsExtra:   configured.SpinnerCharsExtra,
+				}
+				builtinEntry = true
 			}
 		}
 	}
@@ -5283,6 +5294,11 @@ func MergeToolPatterns(toolName string) *tmux.RawPatterns {
 			PromptPatterns: toolDef.PromptPatternsExtra,
 			SpinnerChars:   toolDef.SpinnerCharsExtra,
 		}
+	}
+
+	// A built-in without defaults keeps nil patterns unless its entry sets one.
+	if defaults == nil && builtinEntry && overrides == nil && extras == nil {
+		return nil
 	}
 
 	return tmux.MergeRawPatterns(defaults, overrides, extras)

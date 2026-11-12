@@ -1,0 +1,3 @@
+# Busy marker for the fake crush. Crush has no built-in detection patterns.
+[tools.crush]
+busy_patterns = ["CRUSH_FIXTURE_BUSY"]

@@ -1,0 +1,8 @@
+#!/bin/sh
+case "${1:-}" in
+  --version) echo 0.1.0; exit 0 ;;
+  --help) echo 'crush fixture'; exit 0 ;;
+esac
+stty -echo
+printf 'Crush fixture\n\nCRUSH_FIXTURE_BUSY generating a reply\n'
+exec sleep 600
