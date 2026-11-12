@@ -1520,7 +1520,7 @@ body[data-rail="hidden"] .rightrail { display: none; }
 .markdown-table-scroll th { color: var(--text-hi); background: var(--panel); }
 
 #app-root.phone-root { position: absolute !important; inset: auto !important; top: var(--visual-viewport-top, 0px) !important; left: 0 !important; width: 100%; height: var(--visual-viewport-height, 100dvh); min-height: 0; overflow: hidden; }
-.phone-shell { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: var(--phone-bottom-inset, env(safe-area-inset-bottom)); display: flex; flex-direction: column; background: var(--bg); color: var(--text); }
+.phone-shell { height: 100%; padding-top: env(safe-area-inset-top); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-bottom: var(--phone-bottom-inset, env(safe-area-inset-bottom)); display: flex; flex-direction: column; background: var(--bg); color: var(--text); }
 .phone-shell [hidden] { display: none !important; }
 .phone-shell button, .phone-return { min-height: 44px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); cursor: pointer; }
 .phone-shell button:disabled { opacity: .5; cursor: default; }
@@ -1575,7 +1575,7 @@ body[data-rail="hidden"] .rightrail { display: none; }
 .phone-sheet p { font-size: 14px; margin: 14px 0; }
 .phone-error { padding: 8px 12px; color: #f7768e; }
 .phone-return { position: fixed; z-index: 80; right: 12px; bottom: calc(60px + env(safe-area-inset-bottom)); }
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 500px) and (pointer: coarse) {
   .phone-shell .dialog { max-height: calc(var(--app-height, 100dvh) - var(--keyboard-inset, 0px) - 24px); }
 }
 .phone-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -1606,7 +1606,7 @@ body[data-rail="hidden"] .rightrail { display: none; }
 .phone-chat .session-chat-composer textarea { height: 68px; min-height: 68px; resize: none; }
 .phone-chat .session-chat-actions { padding-top: 4px; }
 
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 500px) and (pointer: coarse) {
   .phone-shell .input-prompt-card {
     flex: 0 1 auto;
     min-height: 0;
@@ -1624,7 +1624,7 @@ body[data-rail="hidden"] .rightrail { display: none; }
   .phone-shell .input-prompt-card a { display: inline-flex; align-items: center; min-height: 44px; }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 500px) and (pointer: coarse) {
   .phone-sessions-screen .phone-header { gap: 0; padding: 0 2px 0 12px; height: 44px; min-height: 44px; }
   .phone-sessions-screen .phone-header h1 { min-width: 0; font-size: 20px; font-weight: 700; }
   .phone-sessions-screen .phone-header button { flex: none; padding: 6px 10px; border: 0; background: transparent; }
