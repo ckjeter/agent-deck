@@ -1,5 +1,6 @@
 import { html } from 'htm/preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
+import { highlightCode } from './codeHighlight.js'
 
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|<https?:\/\/[^\s<>]+>|https?:\/\/[^\s<>`]+)/gi
 
@@ -54,10 +55,17 @@ function MarkdownCodeBlock({ code, language }) {
     }
     if (mounted.current) timer.current = setTimeout(() => setLabel('Copy'), 1500)
   }
-  const languageClass = /^[a-z0-9_+-]+$/i.test(language || '') ? ' language-' + language : ''
+  const safeLanguage = /^[a-z0-9_+-]+$/i.test(language || '') ? language : ''
+  const copied = label === 'Copied'
   return html`<div class="markdown-code">
-    <button type="button" class="markdown-code-copy" aria-label="Copy code" onClick=${copy}>${label}</button>
-    <pre tabIndex="0"><code class=${languageClass.trim()}>${code}</code></pre>
+    <div class="markdown-code-head">
+      <span class="markdown-code-lang">${safeLanguage}</span>
+      <button type="button" class=${'markdown-code-copy' + (copied ? ' copied' : '')} aria-label="Copy code" onClick=${copy}>
+        <span class="markdown-code-icon" aria-hidden="true"></span>
+        <span>${label}</span>
+      </button>
+    </div>
+    <pre tabIndex="0"><code class=${safeLanguage ? 'language-' + safeLanguage : ''}>${highlightCode(code, safeLanguage)}</code></pre>
   </div>`
 }
 

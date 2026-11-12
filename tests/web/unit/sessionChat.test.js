@@ -123,6 +123,18 @@ describe('Conversation history and deliveries', () => {
     expect(screen.queryByRole('button', { name: 'Load earlier' })).toBeNull()
   })
 
+  it('loads earlier messages when the reader scrolls near the top', async () => {
+    installHistory({ messages: [{ id: 'u2', role: 'user', content: 'New question' }, { id: 'a2', role: 'assistant', content: 'New answer' }], has_more: true, before_cursor: 'older', through_cursor: 'tail', content_version: 'v2' })
+    render(html`<${SessionChat} sessionId="one"/>`)
+    await screen.findByText('New answer')
+    fetch.mockImplementationOnce(async () => response({ messages: [{ id: 'u1', role: 'user', content: 'Old question' }], has_more: false }))
+    const output = screen.getByLabelText('Conversation')
+    output.scrollTop = 40
+    fireEvent.scroll(output)
+    await screen.findByText('Old question')
+    expect(fetch.mock.calls.some(([path]) => String(path).includes('before=older'))).toBe(true)
+  })
+
   it('updates queue states while the transcript is unchanged and deduplicates the landed message', async () => {
     let queue = { send_id: 'live-send', message: 'Waiting prompt', state: 'queued' }
     let landed = false
@@ -156,22 +168,21 @@ describe('Conversation history and deliveries', () => {
     const el = screen.getByLabelText('Conversation')
     let height = 1000
     Object.defineProperties(el, { scrollHeight: { get: () => height + (el.textContent.includes('Earlier prompt') ? 300 : 0), configurable: true }, clientHeight: { value: 400, configurable: true } })
-    el.scrollTop = 100
+    el.scrollTop = 500
     fireEvent.scroll(el)
     page = { messages: [{ id: 'a2', role: 'assistant', content: 'Updated answer' }], through_cursor: 'c2', content_version: 'v2' }
     installHistory(page)
     await screen.findByText('Updated answer', {}, { timeout: 3500 })
-    expect(el.scrollTop).toBe(100)
+    expect(el.scrollTop).toBe(500)
     el.scrollTop = 600
     fireEvent.scroll(el)
     height = 1200
     installHistory({ messages: [{ id: 'a3', role: 'assistant', content: 'Newest answer' }], through_cursor: 'c3', content_version: 'v3' })
     await screen.findByText('Newest answer', {}, { timeout: 3500 })
     expect(el.scrollTop).toBe(1200)
+    fetch.mockImplementationOnce(async () => response({ messages: [{ id: 'old', role: 'user', content: 'Earlier prompt' }], has_more: false }))
     el.scrollTop = 20
     fireEvent.scroll(el)
-    fetch.mockImplementationOnce(async () => response({ messages: [{ id: 'old', role: 'user', content: 'Earlier prompt' }], has_more: false }))
-    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
     await screen.findByText('Earlier prompt')
     expect(el.scrollTop).toBe(320)
   }, 10000)

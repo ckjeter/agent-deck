@@ -353,7 +353,7 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
   return html`
     <div class="session-chat">
       <div ref=${output} class="session-chat-output" aria-label="Conversation" tabIndex="0"
-        onScroll=${() => { const el = output.current; stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
+        onScroll=${() => { const el = output.current; stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; if (before && !error && el.scrollTop < 300) loadEarlier() }}>
         ${before && html`<button type="button" class="session-chat-earlier" disabled=${loadingEarlier} onClick=${loadEarlier}>${loadingEarlier ? 'Loading…' : 'Load earlier'}</button>`}
         ${remote && latestOnly && html`<p>Latest remote response only. Earlier history and Terminal are unavailable.</p>`}
         ${error && html`<p role="alert">${error}</p>`}
