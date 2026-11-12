@@ -97,3 +97,32 @@ describe('miniMarkdown links', () => {
     expect(c.querySelector('a')).toBeNull()
   })
 })
+
+describe('miniMarkdown code highlighting', () => {
+  it('highlights keywords, strings, numbers and comments for a known language', () => {
+    const c = mount('```go\n// load it\nfunc Load(n int) string { return "x" + 42 }\n```')
+    const code = c.querySelector('pre code')
+    expect(code.textContent).toBe('// load it\nfunc Load(n int) string { return "x" + 42 }')
+    expect([...code.querySelectorAll('.tok-kw')].map(e => e.textContent)).toEqual(['func', 'return'])
+    expect([...code.querySelectorAll('.tok-type')].map(e => e.textContent)).toEqual(['int', 'string'])
+    expect(code.querySelector('.tok-fn').textContent).toBe('Load')
+    expect(code.querySelector('.tok-str').textContent).toBe('"x"')
+    expect(code.querySelector('.tok-num').textContent).toBe('42')
+    expect(code.querySelector('.tok-com').textContent).toBe('// load it')
+  })
+
+  it('colors diff lines and leaves unknown languages as plain text', () => {
+    const c = mount('```diff\n@@ -1 +1 @@\n-old\n+new\n```\n\n```brainfuck\nreturn "x"\n```')
+    const [diff, plain] = c.querySelectorAll('pre code')
+    expect(diff.querySelector('.tok-del').textContent).toBe('-old')
+    expect(diff.querySelector('.tok-add').textContent).toBe('+new')
+    expect(diff.textContent).toBe('@@ -1 +1 @@\n-old\n+new')
+    expect(plain.querySelector('span')).toBeNull()
+  })
+
+  it('shows the language in the code header next to the copy button', () => {
+    const c = mount('```py\nprint(1)\n```')
+    expect(c.querySelector('.markdown-code-lang').textContent).toBe('py')
+    expect(c.querySelector('.markdown-code-head .markdown-code-copy')).not.toBeNull()
+  })
+})
