@@ -1,0 +1,3 @@
+# Control: hermes has no built-in pattern defaults, so this entry is still ignored and must warn.
+[tools.hermes]
+busy_patterns_extra = ['hermes-busy']
