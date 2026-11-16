@@ -4,6 +4,9 @@ import { apiFetch, authHeaders } from './api.js'
 import { renderMarkdown } from './miniMarkdown.js'
 import { InputPromptCard } from './InputPromptCard.js'
 import { PhoneComposerNotice } from './PhoneComposerNotice.js'
+import { rowsToMessages } from './chatRows.js'
+
+const PAGE_SIZE = 60
 
 function mergeMessages(old, incoming, removed = []) {
   const rows = new Map(old.map(row => [row.id, row]))
@@ -132,6 +135,7 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
   const sendVersion = useRef('')
   const remoteSends = useRef(new Set())
   const through = useRef('')
+  const useTimeline = useRef(!remote)
   const inFlight = useRef(false)
   const output = useRef(null)
   const stickToBottom = useRef(true)
@@ -178,12 +182,35 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
   }, [messages, sends, active])
 
   useEffect(() => () => earlierRequest.current?.abort(), [])
+  useEffect(() => { useTimeline.current = !remote }, [path, remote])
 
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
     let timer
+    const readTimeline = async () => {
+      const query = new URLSearchParams(through.current ? { since: through.current } : { tail: String(PAGE_SIZE) })
+      const res = await fetch(path + '/timeline?' + query, { headers: authHeaders(), signal: controller.signal, cache: 'no-store' })
+      if (res.status === 409) { resetHistory(); return true }
+      const data = res.ok ? await res.json().catch(() => null) : null
+      if (!data || !Array.isArray(data.turns)) {
+        useTimeline.current = false
+        if (through.current) resetHistory()
+        return false
+      }
+      if (controller.signal.aborted) return true
+      const initial = !through.current
+      setLatestOnly(false)
+      version.current = ''
+      through.current = data.through_cursor || ''
+      const rows = rowsToMessages(data.turns)
+      setMessages(old => initial ? rows : mergeMessages(old, [...rows, ...rowsToMessages(data.updates)], data.removed))
+      if (initial) setBefore(data.turns.length >= PAGE_SIZE ? data.before_cursor || '' : '')
+      setLoading(false); setError('')
+      return true
+    }
     const readOutput = async () => {
+      if (useTimeline.current && await readTimeline()) return
       const query = new URLSearchParams({ history: '1' })
       if (through.current) query.set('since', through.current)
       if (version.current) query.set('if-version', version.current)
@@ -251,12 +278,14 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
     earlierRequest.current = controller
     setLoadingEarlier(true)
     try {
-      const query = new URLSearchParams({ history: '1', before })
-      const res = await fetch(path + '/output?' + query, { headers: authHeaders(), signal: controller.signal, cache: 'no-store' })
+      const timeline = useTimeline.current
+      const query = timeline ? new URLSearchParams({ before, limit: String(PAGE_SIZE) }) : new URLSearchParams({ history: '1', before })
+      const res = await fetch(path + (timeline ? '/timeline?' : '/output?') + query, { headers: authHeaders(), signal: controller.signal, cache: 'no-store' })
       if (res.status === 409) { resetHistory(); return }
-      const data = await res.json()
+      let data = await res.json()
       if (!res.ok) throw new Error(data?.error?.message || 'Unable to load earlier messages')
       if (controller.signal.aborted) return
+      if (timeline) data = { messages: rowsToMessages(data.turns), has_more: (data.turns || []).length >= PAGE_SIZE, before_cursor: data.before_cursor }
       const el = output.current
       prepend.current = { top: el.scrollTop, height: el.scrollHeight }
       stickToBottom.current = false
