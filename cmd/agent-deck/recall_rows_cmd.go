@@ -41,32 +41,9 @@ func registerRowsFlags(fs interface {
 }) rowsFlags {
 	return rowsFlags{
 		v1:         fs.Bool("v1", false, "Slice-6 output (turns with role/kind/text, turn frames) instead of rows"),
-		transcript: fs.String("transcript", "", "Read this Claude Code JSONL, Codex rollout or Pi session instead of a session's"),
-		harness:    fs.String("harness", "", "With --transcript: claude, codex or pi"),
+		transcript: fs.String("transcript", "", "Read this Claude Code JSONL or Codex rollout instead of a session's"),
+		harness:    fs.String("harness", "", "With --transcript: claude or codex"),
 	}
-}
-
-// rowsHarness maps a session tool to the native format the rows reader parses.
-func rowsHarness(tool string) string {
-	switch {
-	case session.IsClaudeCompatible(tool):
-		return "claude"
-	case session.IsCodexCompatible(tool):
-		return "codex"
-	}
-	return tool
-}
-
-// liveTranscriptPath resolves an instance's current native transcript.
-func liveTranscriptPath(inst *session.Instance, peers []*session.Instance) (string, error) {
-	switch rowsHarness(inst.Tool) {
-	case "claude", "codex", "pi":
-		if p := session.LiveTranscriptPath(inst, peers); p != "" {
-			return p, nil
-		}
-		return "", fmt.Errorf("session %s has no native transcript on this machine yet", inst.Title)
-	}
-	return "", fmt.Errorf("%w: %s", query.ErrRowsUnsupported, inst.Tool)
 }
 
 var nativeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{7,}$`)
@@ -95,15 +72,11 @@ func nativeTranscriptByID(id string) (harness, path string) {
 }
 
 func instanceTarget(inst *session.Instance, peers []*session.Instance, storage *session.Storage) (*rowsTarget, error) {
-	path, err := liveTranscriptPath(inst, peers)
+	src, sess, err := session.LiveRowsSource(inst, peers)
 	if err != nil {
 		return nil, err
 	}
-	h := rowsHarness(inst.Tool)
-	t := &rowsTarget{inst: inst, storage: storage, direct: true}
-	t.src = query.RowsSource{Harness: h, Path: path, Resolve: func() (string, error) { return liveTranscriptPath(inst, peers) }}
-	t.session = query.RowsSession{ID: inst.ID, Harness: h, NativeID: firstNonEmpty(inst.ClaudeSessionID, inst.CodexSessionID, inst.PiSessionID), Path: path, Title: inst.Title, Cwd: inst.EffectiveWorkingDir()}
-	return t, nil
+	return &rowsTarget{inst: inst, storage: storage, direct: true, src: src, session: sess}, nil
 }
 
 // resolveRowsTarget resolves <session> without the index first: deck
@@ -115,7 +88,7 @@ func resolveRowsTarget(profile, ref string, f rowsFlags) (*rowsTarget, error) {
 	if *f.transcript != "" {
 		h := *f.harness
 		if !query.SupportsDirectRows(h) {
-			return nil, fmt.Errorf("--transcript needs --harness claude, codex or pi")
+			return nil, fmt.Errorf("--transcript needs --harness claude or codex")
 		}
 		return &rowsTarget{direct: true, src: query.RowsSource{Harness: h, Path: *f.transcript}, session: query.RowsSession{Harness: h, Path: *f.transcript}}, nil
 	}
@@ -173,7 +146,7 @@ func (lk *rowsLookup) resolve(ref string) (*rowsTarget, error) {
 	for _, match := range []func(*session.Instance) bool{
 		func(i *session.Instance) bool { return i.ID == ref },
 		func(i *session.Instance) bool {
-			return ref != "" && (i.ClaudeSessionID == ref || i.CodexSessionID == ref || i.PiSessionID == ref)
+			return ref != "" && (i.ClaudeSessionID == ref || i.CodexSessionID == ref)
 		},
 	} {
 		for _, i := range instances {
