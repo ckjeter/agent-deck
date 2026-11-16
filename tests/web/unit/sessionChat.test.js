@@ -16,6 +16,7 @@ function unmount() {
 import { SessionChat } from '../../../internal/web/static/app/SessionChat.js'
 import { TerminalPane } from '../../../internal/web/static/app/panes/TerminalPane.js'
 import { renderMarkdown } from '../../../internal/web/static/app/miniMarkdown.js'
+import { rowsToMessages } from '../../../internal/web/static/app/chatRows.js'
 import { selectedIdSignal } from '../../../internal/web/static/app/state.js'
 import { activeTabSignal } from '../../../internal/web/static/app/uiState.js'
 
@@ -454,5 +455,63 @@ describe('Phone send reliability', () => {
     await new Promise(r => setTimeout(r, 50))
     expect(screen.getAllByText('pi load more')).toHaveLength(1)
     expect(screen.queryByRole('button', { name: 'Dismiss unsent message' })).toBeNull()
+  })
+})
+
+describe('Timeline rows', () => {
+  function response(data, status = 200) { return { ok: status < 400, status, json: async () => data } }
+  function installTimeline(handler) {
+    fetch.mockImplementation(async (path, options) => {
+      if (path === '/api/settings') return response({ webMutations: true, readOnly: false })
+      if (options?.method === 'POST') return response({ send_id: 'live-send', state: 'queued' })
+      if (path.includes('/send-status')) return response({ sends: [], content_version: 'queue' })
+      return handler(path)
+    })
+  }
+  const turns = n => Array.from({ length: n }, (_, i) => ({ id: 'a' + i, kind: 'assistant', body: 'Answer ' + i }))
+
+  it('maps rows to messages', () => {
+    expect(rowsToMessages([
+      { id: 'u1', kind: 'user', body: 'Hi', ts: 't1' },
+      { id: 'c1', kind: 'command', title: '/clear' },
+      { id: 'b1', kind: 'bash', detail: 'go test ./...\nmore', summary: 'ok', finished: true },
+      { id: 'e1', kind: 'edit', detail: 'a.go', meta: { added: 3, removed: 1 } },
+      { id: 'q1', kind: '', queued: true },
+      { id: 'x1', kind: '' },
+      { id: 'm1', kind: 'meta' },
+    ])).toEqual([
+      { id: 'u1', role: 'user', content: 'Hi', timestamp: 't1' },
+      { id: 'c1', role: 'user', content: '/clear' },
+      { id: 'b1', role: 'assistant', tools: true, tool: { kind: 'bash', title: 'Run command', target: 'go test ./...', result: 'ok', finished: true } },
+      { id: 'e1', role: 'assistant', tools: true, tool: { kind: 'edit', title: 'Edit file', target: 'a.go', path: 'a.go', added: 3, removed: 1 } },
+      { id: 'q1', queued: true },
+    ])
+  })
+
+  it('reads the timeline route, follows with since and pages with before', async () => {
+    installTimeline(path => {
+      if (path.includes('before=older')) return response({ turns: [{ id: 'u0', kind: 'user', body: 'Old question' }] })
+      if (path.includes('since=c1')) return response({ turns: [{ id: 'a2', kind: 'assistant', body: 'Follow up' }], through_cursor: 'c2' })
+      if (path.includes('/timeline?tail=60')) return response({ turns: [{ id: 'a1', kind: 'assistant', body: 'First answer' }, ...turns(59)], through_cursor: 'c1', before_cursor: 'older' })
+      return response({ turns: [], through_cursor: 'c2' })
+    })
+    render(html`<${SessionChat} sessionId="one"/>`)
+    await screen.findByText('First answer')
+    await screen.findByText('Follow up', {}, { timeout: 3500 })
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
+    await screen.findByText('Old question')
+    expect(fetch.mock.calls.some(([p]) => p.includes('/timeline?before=older&limit=60'))).toBe(true)
+    expect(fetch.mock.calls.some(([p]) => p.includes('history=1'))).toBe(false)
+  })
+
+  it('falls back to output history when the timeline is off', async () => {
+    installTimeline(path => {
+      if (path.includes('/timeline')) return response({ error: { code: 'RECALL_DISABLED', message: 'recall is off' } }, 503)
+      return response({ messages: [{ id: 'h1', role: 'assistant', content: 'History answer' }], through_cursor: 'h', content_version: 'v1' })
+    })
+    render(html`<${SessionChat} sessionId="one"/>`)
+    await screen.findByText('History answer')
+    await waitFor(() => expect(fetch.mock.calls.some(([p]) => p.includes('/output?history=1&since=h'))).toBe(true), { timeout: 3500 })
+    expect(fetch.mock.calls.filter(([p]) => p.includes('/timeline')).length).toBe(1)
   })
 })
