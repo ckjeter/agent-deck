@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,8 +130,17 @@ func TestRowsPiTailAndBeforePaging(t *testing.T) {
 	if older.BeforeCursor == "" || older.ThroughCursor == "" {
 		t.Fatalf("older page cursors: %+v", older)
 	}
+	// The two pages, older first, are the transcript's last rows in order.
+	full, _ := readRowsT(t, "pi", path, RowsOptions{})
+	paged := append(append([]Row{}, older.Turns...), rows...)
+	tailIDs := full[len(full)-len(paged):]
+	for i := range paged {
+		if paged[i].ID != tailIDs[i].ID {
+			t.Fatalf("paged order %d: %s, want %s", i, paged[i].ID, tailIDs[i].ID)
+		}
+	}
 	seen := map[string]bool{}
-	for _, r := range append(append([]Row{}, older.Turns...), rows...) {
+	for _, r := range paged {
 		seen[r.ID] = true
 	}
 	for _, id := range []string{"m2#1", "call_1", "call_2", "c1", "fe32007a", "m6", "f1"} {
@@ -171,5 +181,69 @@ func TestRowsPiFindLanded(t *testing.T) {
 	}
 	if _, _, ok := FindLanded(context.Background(), "pi", path, 0, "never typed text", time.Time{}); ok {
 		t.Fatal("unrelated text must not land")
+	}
+}
+
+// Pi records CodeRabbit flagged on #3159: a custom_message whose content is
+// a block array, shell commands run directly in pi (role bashExecution), a
+// custom role message, and a role this parser does not know.
+func TestRowsPiDirectShellCustomContentAndUnknownRoles(t *testing.T) {
+	path := t.TempDir() + "/pi.jsonl"
+	lines := `{"type":"session","version":3,"id":"pi-x","cwd":"/p"}
+{"type":"custom_message","id":"cm1","customType":"reviewer","content":[{"type":"text","text":"Review required"},{"type":"image","data":"AA==","mimeType":"image/png"}],"display":true}
+{"type":"message","id":"b1","message":{"role":"bashExecution","command":"ls notes","output":"a.md\nb.md","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1}}
+{"type":"message","id":"b2","message":{"role":"bashExecution","command":"false","output":"","exitCode":1,"cancelled":false,"truncated":false,"timestamp":2}}
+{"type":"message","id":"c1","message":{"role":"custom","customType":"note","content":"from an extension","display":true,"timestamp":3}}
+{"type":"message","id":"x1","message":{"role":"brandNewRole","timestamp":4}}
+{"type":"branch_summary","id":"bs1","parentId":"b1","fromId":"b2","summary":"Tried approach A, went back"}
+{"type":"custom","id":"ext1","customType":"pi.virtual-model-state","data":{"count":42}}
+{"type":"message","id":"t1","message":{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"text","text":"after empty thinking"}]}}
+{"type":"message","timestamp":"2026-11-16T00:00:00.000Z","message":{"role":"user","content":"a record with no id"}}
+`
+	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := readRowsT(t, "pi", path, RowsOptions{})
+	cm, ok := rowByID(rows, "cm1")
+	if !ok || cm.Kind != "system" || cm.Title != "reviewer" || cm.Body != "Review required" {
+		t.Errorf("array custom_message: %+v", cm)
+	}
+	ok1, ok := rowByID(rows, "b1")
+	if !ok || ok1.Kind != "bash" || ok1.Detail != "ls notes" || ok1.Body != "a.md\nb.md" || ok1.Finished == nil || !*ok1.Finished || ok1.IsError == nil || *ok1.IsError || ok1.Meta["exit_code"] != 0 {
+		t.Errorf("direct shell row: %+v", ok1)
+	}
+	failed, ok := rowByID(rows, "b2")
+	if !ok || failed.IsError == nil || !*failed.IsError || failed.Meta["exit_code"] != 1 {
+		t.Errorf("failed direct shell row: %+v", failed)
+	}
+	custom, ok := rowByID(rows, "c1")
+	if !ok || custom.Kind != "system" || custom.Title != "note" || custom.Body != "from an extension" {
+		t.Errorf("custom role row: %+v", custom)
+	}
+	unknown, ok := rowByID(rows, "x1")
+	if !ok || unknown.Kind != "other" || unknown.RawType != "message:brandNewRole" {
+		t.Errorf("unknown role row: %+v", unknown)
+	}
+	branch, ok := rowByID(rows, "bs1")
+	if !ok || branch.Kind != "system" || branch.Title != "Branch summary" || branch.Body != "Tried approach A, went back" || branch.Meta["from_id"] != "b2" {
+		t.Errorf("branch summary row: %+v", branch)
+	}
+	if _, ok := rowByID(rows, "ext1"); ok {
+		t.Error("extension state (custom) became a row")
+	}
+	if _, ok := rowByID(rows, "t1#0"); ok {
+		t.Error("an empty thinking part became a row")
+	}
+	if text, ok := rowByID(rows, "t1#1"); !ok || text.Body != "after empty thinking" {
+		t.Errorf("text after empty thinking: %+v", text)
+	}
+	// A record without an id gets a content-keyed id that a tail window
+	// reproduces.
+	last := rows[len(rows)-1]
+	if !strings.HasPrefix(last.ID, "pi:") || last.Body != "a record with no id" {
+		t.Fatalf("id-less row: %+v", last)
+	}
+	if tail, _ := readRowsT(t, "pi", path, RowsOptions{Tail: 1}); len(tail) != 1 || tail[0].ID != last.ID {
+		t.Fatalf("id-less row id differs in a tail window: %+v vs %s", tail, last.ID)
 	}
 }
