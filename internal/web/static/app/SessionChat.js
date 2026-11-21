@@ -376,6 +376,8 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
   const sections = groups.map(group => ({ ...group, segments: segmentChatRows(group.rows) }))
   let latestToolGroup = ''
   for (const section of sections) {
+    // A user message after the tools means they belong to a finished turn.
+    if (section.role === 'user') latestToolGroup = ''
     for (const segment of section.segments) if (segment.tools) latestToolGroup = segment.rows[0].id
   }
 

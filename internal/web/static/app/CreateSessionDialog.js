@@ -15,8 +15,11 @@ import { displayLabelForTool, resolveCreateSessionPickerTools } from './pickerTo
 import {
   CUSTOM_MODEL, effortOptionsForTool, modelOptionsForTool, seedModelSelection,
 } from './modelCatalog.js'
+import { menuModelSignal, groupCreateDefaults } from './dataModel.js'
 
-export function CreateSessionDialog() {
+// groupPicker lets the user choose the group in the dialog (phone, where no
+// group can be selected first). onCreated gets the new session id and its group.
+export function CreateSessionDialog({ groupPicker = false, onCreated } = {}) {
   const open = createSessionDialogSignal.value
   const ctx = open || { groupPath: '', groupName: '', defaultPath: '', tool: '', modelId: '' }
 
@@ -30,6 +33,7 @@ export function CreateSessionDialog() {
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [seededFor, setSeededFor] = useState(null)
+  const [groupPath, setGroupPath] = useState('')
 
   // Tools actually offered by the picker (operator-filtered via hidden_tools /
   // show_only_installed_tools). Computed before the seeding effect below so
@@ -55,6 +59,7 @@ export function CreateSessionDialog() {
     setCustomModel(seeded.customModel)
     setReasoningEffort('')
     setTitle('')
+    setGroupPath(ctx.groupPath || '')
     setError(null)
     setSeededFor(ctx.groupPath)
   }
@@ -74,12 +79,13 @@ export function CreateSessionDialog() {
         payload.createDir = true
         payload.createDirPaths = directoryCreation.missing
       }
-      if (ctx.groupPath) payload.groupPath = ctx.groupPath
+      if (groupPath) payload.groupPath = groupPath
       const modelId = selectedModelId()
       if (modelId) payload.modelId = modelId
       if (effectiveEffort) payload.reasoningEffort = effectiveEffort
-      await apiFetch('POST', '/api/sessions', payload)
+      const created = await apiFetch('POST', '/api/sessions', payload)
       createSessionDialogSignal.value = null
+      if (created?.sessionId) onCreated?.(created.sessionId, groupPath)
     } catch (err) {
       setDirectoryCreation(null)
       setError(err.message)
@@ -121,7 +127,22 @@ export function CreateSessionDialog() {
           </button>
         </div>
         <div class="db">
-          ${ctx.groupName && html`
+          ${groupPicker && html`
+            <div class="field">
+              <label for="create-session-group-picker">GROUP</label>
+              <select id="create-session-group-picker" data-testid="create-session-group-picker" value=${groupPath}
+                onChange=${e => {
+                  const next = e.target.value
+                  // Follow the new group's default folder unless the user typed one.
+                  if (path === (groupCreateDefaults(groupPath).defaultPath || '')) setPath(groupCreateDefaults(next).defaultPath || '')
+                  setGroupPath(next)
+                }}>
+                <option value="">(no group)</option>
+                ${menuModelSignal.value.groups.filter(g => !g.derived).map(g => html`<option value=${g.path}>${g.path}</option>`)}
+              </select>
+            </div>
+          `}
+          ${!groupPicker && ctx.groupName && html`
             <div class="field">
               <label>GROUP</label>
               <div class="ro-value" data-testid="create-session-group">${ctx.groupName}</div>

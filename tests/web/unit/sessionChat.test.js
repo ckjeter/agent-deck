@@ -212,6 +212,17 @@ describe('Conversation history and deliveries', () => {
     expect(screen.getAllByRole('button', { name: /Ran 3 commands/ })).toHaveLength(1)
   })
 
+  it('does not mark the previous turn live after a new user message', async () => {
+    installHistory({ messages: [
+      { id: 'bash-1', role: 'assistant', tools: true, tool: { kind: 'bash', title: 'Run command', target: 'make', finished: true } },
+      { id: 'a1', role: 'assistant', content: 'Done' },
+      { id: 'u2', role: 'user', content: 'Next task' },
+    ], through_cursor: 'turn-2', content_version: 'turn-v2' })
+    render(html`<${SessionChat} sessionId="one" mobileComposer=${true} sessionStatus="running"/>`)
+    await screen.findByRole('button', { name: /Ran 1 command/ })
+    expect(screen.queryByRole('img', { name: 'Live tool activity' })).toBeNull()
+  })
+
   it('keeps tool labels through result updates and follows new steps at the bottom', async () => {
     installHistory({ messages: [{ id: 'tool-1', role: 'assistant', tools: true, tool: { kind: 'bash', title: 'Run tests', target: 'go test ./...', finished: false } }], through_cursor: 'c1', content_version: 'v1' })
     render(html`<${SessionChat} sessionId="one" mobileComposer=${true} sessionStatus="running"/>`)

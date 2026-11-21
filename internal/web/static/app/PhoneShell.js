@@ -213,6 +213,11 @@ export function PhoneShell() {
     setTerminalID(null)
     selectSession(session.id)
   }
+  // Open a session made here and unfold its group so Back lands next to it.
+  const openCreated = (sessionId, group) => {
+    for (let path = group; path; path = parentGroupPath(path)) if (!isGroupOpen(groupExpandedSignal.value, path)) toggleGroupOpen(path)
+    open({ id: sessionId })
+  }
   const back = () => {
     setTerminalID(null)
     if (openedHere.current) window.history.back()
@@ -406,7 +411,7 @@ export function PhoneShell() {
         target=${actionSheet.target} initialView=${actionSheet.view} settings=${settings}
         onClose=${() => setActionSheet(null)} onDone=${kind => actionDone(kind, actionSheet.target)}/>`}
       ${archivedOpen && html`<${PhoneArchivedSheet} settings=${settings} onClose=${() => setArchivedOpen(false)} onRestored=${refresh}/>`}
-      ${createSessionDialogSignal.value && Create && html`<${Create}/>`}
+      ${createSessionDialogSignal.value && Create && html`<${Create} groupPicker=${true} onCreated=${openCreated}/>`}
       <${ToastContainer}/>
     </div>
   `
