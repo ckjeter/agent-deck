@@ -69,6 +69,10 @@ func (s *Server) handleRemoteSessionChat(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	name, id, action := parts[0], parts[2], parts[3]
+	if action == "timeline" {
+		s.handleRemoteSessionRoute(w, r)
+		return
+	}
 	method := http.MethodGet
 	if action == "send" {
 		method = http.MethodPost

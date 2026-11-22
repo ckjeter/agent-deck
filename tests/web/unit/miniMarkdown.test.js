@@ -14,8 +14,6 @@ function mount(source) {
 
 afterEach(() => {
   if (container) { render(null, container); container.remove(); container = null }
-  vi.unstubAllGlobals()
-  vi.restoreAllMocks()
 })
 
 describe('miniMarkdown conversation constructs', () => {
@@ -53,16 +51,11 @@ describe('miniMarkdown conversation constructs', () => {
     expect(c.querySelector('hr')).not.toBeNull()
   })
 
-  it('copies fenced code and preserves its language without interpreting HTML', async () => {
-    const writeText = vi.fn(async () => {})
-    vi.stubGlobal('navigator', { clipboard: { writeText } })
+  it('preserves fenced code whitespace and escapes markup', () => {
     const c = mount('```html\n<img src=x onerror=alert(1)>\n  indented\n```')
     expect(c.querySelector('pre code').textContent).toBe('<img src=x onerror=alert(1)>\n  indented')
-    expect(c.querySelector('pre code').className).toContain('language-html')
+    expect(c.querySelector('pre code').className).toBe('language-html')
     expect(c.querySelector('img')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Copy code' }))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('<img src=x onerror=alert(1)>\n  indented'))
-    await screen.findByText('Copied')
   })
 
   it('keeps malicious markup and unsafe URLs as inert text in every block context', () => {
@@ -120,9 +113,159 @@ describe('miniMarkdown code highlighting', () => {
     expect(plain.querySelector('span')).toBeNull()
   })
 
-  it('shows the language in the code header next to the copy button', () => {
-    const c = mount('```py\nprint(1)\n```')
-    expect(c.querySelector('.markdown-code-lang').textContent).toBe('py')
-    expect(c.querySelector('.markdown-code-head .markdown-code-copy')).not.toBeNull()
+
+})
+
+
+describe('miniMarkdown edge cases and compatibility', () => {
+  it('keeps the existing fleet summary fixture byte-for-byte compatible', () => {
+    const c = mount('# Fleet\n- **2** need input\n- run `make ci`\n1. [PR](https://x.test/1)\n\nplain para')
+    expect(c.firstChild.innerHTML).toBe('<h3>Fleet</h3><ul><li><strong>2</strong> need input</li><li>run <code>make ci</code></li></ul><ol><li><a href="https://x.test/1" target="_blank" rel="noopener noreferrer">PR</a></li></ol><p>plain para</p>')
+  })
+
+  it('keeps both callers heading and paragraph conventions', () => {
+    const c = mount('## Today\n- 3 sessions need input\n\n### Next\n* review\n\nfirst line\nsecond line')
+    expect(c.firstChild.innerHTML).toBe('<h4>Today</h4><ul><li>3 sessions need input</li></ul><h5>Next</h5><ul><li>review</li></ul><p>first line second line</p>')
+  })
+
+  it('renders mixed sibling lists and indented continuation lines', () => {
+    const c = mount('- parent\n  continuation\n  1. ordered child\n  - unordered child\n1. next\n+ last')
+    expect(c.firstChild.innerHTML).toBe('<ul><li>parent continuation<ol><li>ordered child</li></ol><ul><li>unordered child</li></ul></li></ul><ol><li>next</li></ol><ul><li>last</li></ul>')
+  })
+
+  it.each(['```', '~~~'])('renders %s fences without a language and closes an unterminated fence', fence => {
+    const source = fence + '\n  <b> & \"quoted\"\n\nlast'
+    const c = mount(source)
+    expect(c.querySelector('pre code').textContent).toBe('  <b> & \"quoted\"\n\nlast')
+    expect(c.querySelector('pre code').className).toBe('')
+    expect(c.querySelector('pre code span,b')).toBeNull()
+  })
+
+  it('requires a matching fence at least as long and ignores nonempty closers', () => {
+    const c = mount('````js\n```\n~~~~\n````no\nconst x = 1\n`````\nafter')
+    expect(c.querySelector('pre code').textContent).toBe('```\n~~~~\n````no\nconst x = 1')
+    expect(c.querySelector('p').textContent).toBe('after')
+  })
+
+  it('normalizes short and long table rows and rejects invalid separators', () => {
+    const c = mount('A | B | C\n--- | --- | ---\nx | y\nx | y | z | ignored\n\nA | B\n-- | nope')
+    expect([...c.querySelectorAll('tbody td')].map(el => el.textContent)).toEqual(['x', 'y', '', 'x', 'y', 'z'])
+    expect(c.querySelector('p').textContent).toBe('A | B -- | nope')
+  })
+
+  it('keeps one-cell rows in a table and renders one-column tables', () => {
+    const c = mount('A | B\n--- | ---\n| only |\nx | y\n\n| Status |\n| --- |\n| ready |\n\nplain\n---')
+    const tables = c.querySelectorAll('table')
+    expect(tables).toHaveLength(2)
+    expect([...tables[0].querySelectorAll('tbody td')].map(el => el.textContent)).toEqual(['only', '', 'x', 'y'])
+    expect([...tables[1].querySelectorAll('th, td')].map(el => el.textContent)).toEqual(['Status', 'ready'])
+    expect(c.querySelector('hr')).not.toBeNull()
+  })
+
+  it('trims a long run of closing parens after a URL in linear time', () => {
+    const started = performance.now()
+    const c = mount('https://x.test/' + ')'.repeat(80000))
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(c.querySelector('a').getAttribute('href')).toBe('https://x.test/')
+  })
+
+  it('ends a table at a line that starts another block', () => {
+    const c = mount('A | B\n--- | ---\nx | y\n## Next | Steps\n- a | b\n> q | r')
+    expect([...c.querySelectorAll('tbody td')].map(el => el.textContent)).toEqual(['x', 'y'])
+    expect(c.querySelector('h4').textContent).toBe('Next | Steps')
+    expect(c.querySelector('li').textContent).toBe('a | b')
+    expect(c.querySelector('blockquote').textContent).toContain('q | r')
+  })
+
+  it('keeps balanced parentheses in bare URLs and drops the unmatched one', () => {
+    const c = mount('See https://example.test/Go_(lang) and (https://example.test/a_(b)).')
+    expect([...c.querySelectorAll('a')].map(a => a.getAttribute('href'))).toEqual(['https://example.test/Go_(lang)', 'https://example.test/a_(b)'])
+    expect(c.textContent).toBe('See https://example.test/Go_(lang) and (https://example.test/a_(b)).')
+  })
+
+  it.each(['javascript:alert', 'JaVaScRiPt:alert', 'data:text/html,x', 'vbscript:msgbox', 'file:///etc/passwd', '//example.test', 'javascript&#58;alert'])('rejects the unsafe link target %s', href => {
+    const c = mount('[click](' + href + ')')
+    expect(c.querySelector('a')).toBeNull()
+    expect(c.textContent).toBe('[click](' + href + ')')
+  })
+
+  it('escapes link labels and prevents URL attribute injection', () => {
+    const c = mount('[<img src=x onerror=alert>](https://example.test/\"onmouseover=alert)')
+    const a = c.querySelector('a')
+    expect(a.textContent).toBe('<img src=x onerror=alert>')
+    expect(a.getAttribute('href')).toBe('https://example.test/\"onmouseover=alert')
+    expect(a.hasAttribute('onmouseover')).toBe(false)
+    expect(c.querySelector('img')).toBeNull()
+  })
+
+  it('rejects fence language attribute injection', () => {
+    const c = mount('```js\"onmouseover=alert\n<img src=x onerror=alert>\n```')
+    const code = c.querySelector('pre code')
+    expect(code.className).toBe('')
+    expect(code.hasAttribute('onmouseover')).toBe(false)
+    expect(code.textContent).toBe('<img src=x onerror=alert>')
+    expect(c.querySelector('img')).toBeNull()
+  })
+
+  it('escapes text in headings, lists, inline formatting and table headers and cells', () => {
+    const attack = '<img src=x onerror=alert>'
+    const c = mount('# ' + attack + '\n- **' + attack + '** `' + attack + '`\n\n| ' + attack + ' | B |\n| --- | --- |\n| &lt;script&gt; | ' + attack + ' |')
+    expect(c.querySelector('img,script')).toBeNull()
+    expect(c.querySelector('h3').textContent).toBe(attack)
+    expect(c.querySelector('strong').textContent).toBe(attack)
+    expect(c.querySelector('li code').textContent).toBe(attack)
+    expect(c.querySelector('th').textContent).toBe(attack)
+    expect(c.querySelector('td').textContent).toBe('&lt;script&gt;')
+    expect(c.querySelectorAll('td')[1].textContent).toBe(attack)
+  })
+
+  it.each(['js', 'py', 'sh', 'rust', 'sql', 'yaml', 'json', 'typescript', 'patch', 'unknown', '__proto__', 'constructor'])('preserves and escapes all source text for %s', language => {
+    const source = '// comment\n# comment\nSELECT true 42 0xff 1.2e3\nreturn \"<img src=x>\" & \'text\'\n+added\n-removed\n@@ section'
+    const c = mount('```' + language + '\n' + source + '\n```')
+    expect(c.querySelector('pre code').textContent).toBe(source)
+    if (['unknown', '__proto__', 'constructor'].includes(language)) expect(c.querySelector('pre code span')).toBeNull()
+    else expect(c.querySelector(language === 'patch' ? '.tok-add' : '.tok-kw')).not.toBeNull()
+    expect(c.querySelector('img')).toBeNull()
+  })
+
+  it('leaves large code blocks plain to bound highlighting work', () => {
+    const source = 'const x = 1\n'.repeat(2000)
+    const c = mount('```js\n' + source + '```')
+    expect(c.querySelector('pre code').textContent).toBe(source.slice(0, -1))
+    expect(c.querySelector('pre code span')).toBeNull()
+  })
+})
+
+
+describe('miniMarkdown nesting limits', () => {
+  it('bounds a line of 20,000 blockquote markers and preserves the remaining text', () => {
+    const source = '>'.repeat(20000) + ' <img src=x onerror=alert>'
+    let c
+    expect(() => { c = mount(source) }).not.toThrow()
+    expect(c.querySelectorAll('blockquote')).toHaveLength(16)
+    expect(c.textContent).toBe('>'.repeat(20000 - 16) + ' <img src=x onerror=alert>')
+    expect(c.querySelector('img')).toBeNull()
+  })
+
+  it('flattens list nesting beyond 16 levels and preserves all 3,000 items', () => {
+    const items = Array.from({ length: 3000 }, (_, i) => 'item-' + i)
+    const source = items.map((item, i) => ' '.repeat(i) + '- ' + item).join('\n')
+    let c
+    expect(() => { c = mount(source) }).not.toThrow()
+    expect(c.querySelectorAll('ul')).toHaveLength(16)
+    expect(c.querySelectorAll('li')).toHaveLength(items.length)
+    expect(c.textContent).toBe(items.join(''))
+  })
+
+  it('copies fenced code through the copy button without interpreting HTML', async () => {
+    const writeText = vi.fn(async () => {})
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    const c = mount('```html\n<img src=x onerror=alert(1)>\n  indented\n```')
+    expect(c.querySelector('.markdown-code-lang').textContent).toBe('html')
+    expect(c.querySelector('img')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy code' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('<img src=x onerror=alert(1)>\n  indented'))
+    await screen.findByText('Copied')
+    vi.unstubAllGlobals()
   })
 })

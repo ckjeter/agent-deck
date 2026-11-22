@@ -1,11 +1,39 @@
+// miniMarkdown.js -- shared renderer for Command Center and Fleet board
+// summaries, and the chat view planned in #3124. It builds preact vnodes
+// instead of an HTML string, so input text cannot inject markup: there is no
+// innerHTML anywhere on this path.
+//
+// Supported: # through ###### headings, nested and mixed lists, tables with
+// alignment, fenced code with highlighting, blockquotes, horizontal rules,
+// **bold**, `code`, http(s) links and autolinks. Anything else renders as plain
+// text. Nesting is capped at 16 levels, with deeper content kept as text or flat
+// list items.
 import { html } from 'htm/preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { highlightCode } from './codeHighlight.js'
+
+const MAX_NESTING = 16
 
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|<https?:\/\/[^\s<>]+>|https?:\/\/[^\s<>`]+)/gi
 
 function link(href, label) {
   return html`<a href=${href} target="_blank" rel="noopener noreferrer">${label}</a>`
+}
+
+// Drops trailing punctuation, but keeps a ")" that closes a "(" in the URL.
+function trimUrlTrail(url) {
+  let open = 0
+  let close = 0
+  for (const char of url) { if (char === '(') open++; else if (char === ')') close++ }
+  let end = url.length
+  while (end > 0 && /[.,;:!?)\]'"]/.test(url[end - 1])) {
+    if (url[end - 1] === ')') {
+      if (open >= close) break
+      close--
+    }
+    end--
+  }
+  return url.slice(0, end)
 }
 
 function inline(text) {
@@ -21,8 +49,7 @@ function inline(text) {
     } else if (tok.startsWith('<')) {
       out.push(link(tok.slice(1, -1), tok.slice(1, -1)))
     } else if (/^https?:/i.test(tok)) {
-      const trail = tok.match(/[.,;:!?)\]'"]+$/)
-      if (trail) tok = tok.slice(0, -trail[0].length)
+      tok = trimUrlTrail(tok)
       out.push(link(tok, tok))
     } else {
       const [, label, href] = tok.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/)
@@ -69,6 +96,7 @@ function MarkdownCodeBlock({ code, language }) {
   </div>`
 }
 
+
 function splitTableRow(raw) {
   const cells = []
   let cell = ''
@@ -93,12 +121,18 @@ function tableAlignment(raw) {
   return cells.map(cell => cell.startsWith(':') && cell.endsWith(':') ? 'center' : cell.endsWith(':') ? 'right' : 'left')
 }
 
+// A line that starts another block ends a table even when it contains a pipe.
+function startsBlock(raw) {
+  return /^ {0,3}(?:#{1,6}\s|>|`{3,}|~{3,})/.test(raw) || !!listItem(raw) ||
+    /^(?:-{3,}|\*{3,}|_{3,})$/.test(raw.replace(/\s/g, ''))
+}
+
 function listItem(raw) {
   const match = raw.match(/^( *)(?:[-+*]|(\d+)[.)])\s+(.*)$/)
   return match ? { indent: match[1].length, ordered: !!match[2], text: match[3] } : null
 }
 
-function parseList(lines, start, indent) {
+function parseList(lines, start, indent, depth) {
   const first = listItem(lines[start])
   const ordered = first.ordered
   const items = []
@@ -111,7 +145,12 @@ function parseList(lines, start, indent) {
       if (match.indent < indent) break
       if (match.indent > indent) {
         if (!items.length) break
-        const [child, next] = parseList(lines, index, match.indent)
+        if (depth >= MAX_NESTING) {
+          items.push({ text: match.text, children: [] })
+          index++
+          continue
+        }
+        const [child, next] = parseList(lines, index, match.indent, depth + 1)
         items[items.length - 1].children.push(child)
         index = next
         continue
@@ -133,7 +172,8 @@ function parseList(lines, start, indent) {
   return [ordered ? html`<ol>${children}</ol>` : html`<ul>${children}</ul>`, index]
 }
 
-export function renderMarkdown(src) {
+export function renderMarkdown(src, depth = 0) {
+  if (depth >= MAX_NESTING) return [html`<p>${String(src || '')}</p>`]
   const lines = String(src || '').split(/\r?\n/)
   const blocks = []
   let para = []
@@ -171,11 +211,12 @@ export function renderMarkdown(src) {
     if (index + 1 < lines.length) {
       const headers = splitTableRow(raw)
       const alignment = tableAlignment(lines[index + 1])
-      if (alignment && headers.length > 1 && headers.length === alignment.length) {
+      const piped = raw.includes('|') && lines[index + 1].includes('|')
+      if (alignment && (headers.length > 1 || piped) && headers.length === alignment.length) {
         flushPara()
         const rows = []
         index += 2
-        while (index < lines.length && lines[index].trim() && splitTableRow(lines[index]).length > 1) {
+        while (index < lines.length && lines[index].trim() && lines[index].includes('|') && !startsBlock(lines[index])) {
           const cells = splitTableRow(lines[index])
           rows.push(headers.map((_, cell) => cells[cell] || ''))
           index++
@@ -189,7 +230,7 @@ export function renderMarkdown(src) {
       }
     }
 
-    let match = line.match(/^(#{1,6})\s+(.*)$/)
+    const match = line.match(/^(#{1,6})\s+(.*)$/)
     if (match) {
       flushPara()
       const body = inline(match[2])
@@ -210,13 +251,13 @@ export function renderMarkdown(src) {
         index++
       }
       index--
-      blocks.push(html`<blockquote>${renderMarkdown(quoted.join('\n'))}</blockquote>`)
+      blocks.push(html`<blockquote>${renderMarkdown(quoted.join('\n'), depth + 1)}</blockquote>`)
       continue
     }
     const item = listItem(raw)
     if (item) {
       flushPara()
-      const [list, next] = parseList(lines, index, item.indent)
+      const [list, next] = parseList(lines, index, item.indent, depth + 1)
       blocks.push(list)
       index = next - 1
       continue
