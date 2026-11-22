@@ -42,6 +42,18 @@ describe('CreateSessionDialog group picker', () => {
     expect(posted[0]).toMatchObject({ title: 'phone-made', groupPath: 'personal', projectPath: '/home/me' })
   })
 
+  it('puts shell last and never seeds it on phone', async () => {
+    const { pickerToolsSignal } = await import('../../../internal/web/static/app/state.js')
+    pickerToolsSignal.value = ['shell', 'claude', 'codex']
+    createSessionDialogSignal.value = groupCreateDefaults('')
+    render(html`<${CreateSessionDialog} groupPicker=${true}/>`, container)
+    await screen.findByLabelText('GROUP')
+    const tools = [...container.querySelectorAll('.seg-btn')]
+    expect(tools.map(b => b.textContent.trim().toLowerCase())).toEqual(['claude', 'chatgpt', 'shell'])
+    expect(tools[0].className).toContain('on')
+    pickerToolsSignal.value = []
+  })
+
   it('keeps the read-only group on desktop', async () => {
     createSessionDialogSignal.value = groupCreateDefaults('work')
     render(html`<${CreateSessionDialog}/>`, container)

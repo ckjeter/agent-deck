@@ -1805,3 +1805,10 @@ body[data-rail="hidden"] .rightrail { display: none; }
 .phone-archived-row button { flex: none; }
 .phone-shell .toast-stack { left: 8px !important; right: 8px !important; max-width: none !important; bottom: calc(64px + var(--phone-bottom-inset, env(safe-area-inset-bottom))) !important; z-index: 85 !important; }
 .phone-shell .toast-stack .toast-action { min-height: 36px; }
+
+/* Create dialog on phone: wrap the tool row and undo the generic phone button box. */
+.phone-shell .dialog .seg-row { flex-wrap: wrap; width: auto; }
+.phone-shell .dialog .seg-row .seg-btn { min-height: 40px; padding: 8px 12px; border: 0; background: none; }
+.phone-shell .dialog .seg-row .seg-btn.on { background: var(--card); color: var(--text-hi); }
+.phone-shell .dialog .dh .icon-btn { min-height: 36px; padding: 6px; border: 0; background: none; }
+.phone-shell .dialog .kbd { display: none; }

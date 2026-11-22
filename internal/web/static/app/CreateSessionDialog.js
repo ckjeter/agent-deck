@@ -39,7 +39,9 @@ export function CreateSessionDialog({ groupPicker = false, onCreated } = {}) {
   // Tools actually offered by the picker (operator-filtered via hidden_tools /
   // show_only_installed_tools). Computed before the seeding effect below so
   // the seed can be checked against it — see next comment.
-  const shownTools = resolveCreateSessionPickerTools(pickerToolsSignal.value)
+  const pickerTools = resolveCreateSessionPickerTools(pickerToolsSignal.value)
+  // On phone a shell has no chat, so it goes last and is never the default.
+  const shownTools = groupPicker ? [...pickerTools.filter(t => t !== 'shell'), ...pickerTools.filter(t => t === 'shell')] : pickerTools
 
   // Re-seed when the dialog opens for a different group. Keyed on groupPath so
   // SSE-driven re-renders never stomp edits the user is in the middle of, and
