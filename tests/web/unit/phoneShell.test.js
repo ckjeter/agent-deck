@@ -87,6 +87,17 @@ it('persists collapse through the existing shared group PATCH', async () => {
   expect(screen.queryByRole('button', { name: /First session/ })).toBeNull()
 })
 
+it('opens a shell session straight in Terminal with no Chat', async () => {
+  sessionsSignal.value = [group('Work'), { type: 'session', session: { ...member('Shell box', 'Work').session, tool: 'shell' } }]
+  render(html`<${PhoneShell}/>`, container)
+  fireEvent.click(screen.getByRole('button', { name: /Shell box/ }))
+  await screen.findByText('Raw terminal test surface')
+  expect(document.querySelector('.phone-chat')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Session menu' }))
+  await screen.findByRole('dialog', { name: 'Session menu' })
+  expect(screen.queryByRole('button', { name: /Open Terminal|Return to Chat/ })).toBeNull()
+})
+
 it('opens Chat by default and unmounts Terminal when Chat is selected from the session menu', async () => {
   localStorage.setItem('agentdeck.sessionView', 'terminal')
   render(html`<${PhoneShell}/>`, container)

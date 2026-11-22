@@ -88,7 +88,10 @@ export function PhoneShell() {
   const selectedDetail = selected?.substateDetail || selected?.substate_detail || selected?.raw?.substateDetail || ''
   const canMutate = !!settings && settings.webMutations && !settings.readOnly
   const Create = useLazyComponent(!!createSessionDialogSignal.value, () => import('./CreateSessionDialog.js'), 'createDialog', m => m.CreateSessionDialog)
-  const Terminal = useLazyComponent(!isRemote && terminalID === id && !!id, () => import('./TerminalPanel.js'), 'phoneTerminal', m => m.TerminalPanel)
+  // A shell has no chat, so it always opens in Terminal.
+  const shellOnly = !isRemote && selected?.tool === 'shell'
+  const terminalShown = !!id && !isRemote && (terminalID === id || shellOnly)
+  const Terminal = useLazyComponent(terminalShown, () => import('./TerminalPanel.js'), 'phoneTerminal', m => m.TerminalPanel)
   const raw = new Map(sessionsSignal.value.filter(i => i.session).map(i => [i.session.id, i.session]))
   const refreshRemotes = async () => {
     const data = await apiFetch('GET', '/api/remotes')
@@ -365,15 +368,15 @@ export function PhoneShell() {
           </div>
         </main>
         ${id && html`<main class="phone-conversation">
-          ${!isRemote && terminalID === id && Terminal && html`<${Terminal} inputControls=${true}/>`}
-          <div class="phone-chat" hidden=${terminalID === id}>
-            ${!profile || (isRemote && !remoteSelection) ? html`<p>Loading session…</p>` : html`<${SessionChat} key=${profile + '/' + id} sessionId=${selected?.id || id} active=${terminalID !== id} enabled=${isRemote ? !!remoteSelection?.remote.online : connection === 'connected'}
+          ${terminalShown && Terminal && html`<${Terminal} inputControls=${true}/>`}
+          ${!shellOnly && html`<div class="phone-chat" hidden=${terminalShown}>
+            ${!profile || (isRemote && !remoteSelection) ? html`<p>Loading session…</p>` : html`<${SessionChat} key=${profile + '/' + id} sessionId=${selected?.id || id} active=${!terminalShown} enabled=${isRemote ? !!remoteSelection?.remote.online : connection === 'connected'}
               endpoint=${isRemote ? '/api/remotes/' + encodeURIComponent(remoteSelection.remote.name) + '/sessions/' + encodeURIComponent(selected.id) : undefined} remote=${isRemote}
               interactiveMenu=${!isRemote && raw.get(id)?.substate === 'interactive-menu'} onOpenTerminal=${!isRemote ? () => setTerminalID(id) : undefined}
               sessionStatus=${selected?.status} mobileComposer=${true}
               initialText=${loadPhoneDraft(profile, id)} onTextChange=${text => savePhoneDraft(profile, id, text)}/>
             `}
-          </div>
+          </div>`}
         </main>`}
       </div>
       ${more && html`<div class="phone-sheet-backdrop" onClick=${() => setMore(false)}>
@@ -390,7 +393,7 @@ export function PhoneShell() {
           <header><h2>${id ? selected?.title || 'Session' : 'More'}</h2><button ref=${closeButton} onClick=${() => setMore(false)}>Close</button></header>
           ${id ? html`
             <p>${[selected?.group, selected?.tool, selected?.status].filter(Boolean).join(' · ')}</p>
-            ${!isRemote && html`<button onClick=${() => { setMore(false); setTerminalID(terminalID === id ? null : id) }}>${terminalID === id ? 'Return to Chat' : 'Open Terminal'}</button>`}
+            ${!isRemote && !shellOnly && html`<button onClick=${() => { setMore(false); setTerminalID(terminalID === id ? null : id) }}>${terminalID === id ? 'Return to Chat' : 'Open Terminal'}</button>`}
             ${selectedTarget && html`
               ${sessionBlocker && html`<p class="phone-action-reason" role="note">${sessionBlocker}</p>`}
               <button disabled=${!!sessionBlocker} onClick=${() => openAction('rename')}>Rename</button>
