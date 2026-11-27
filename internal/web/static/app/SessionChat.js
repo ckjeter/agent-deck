@@ -192,6 +192,11 @@ export function SessionChat({ sessionId, active = true, enabled = true, initialT
       const query = new URLSearchParams(through.current ? { since: through.current } : { tail: String(PAGE_SIZE) })
       const res = await fetch(path + '/timeline?' + query, { headers: authHeaders(), signal: controller.signal, cache: 'no-store' })
       if (res.status === 409) { resetHistory(); return true }
+      // A new session has no transcript yet. Wait for it instead of showing the terminal screen.
+      if (res.status === 404 && !through.current) {
+        setLatestOnly(false); setMessages([]); setBefore(''); setLoading(false); setError('')
+        return true
+      }
       const data = res.ok ? await res.json().catch(() => null) : null
       if (!data || !Array.isArray(data.turns)) {
         useTimeline.current = false

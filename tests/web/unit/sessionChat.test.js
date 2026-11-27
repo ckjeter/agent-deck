@@ -499,6 +499,21 @@ describe('Timeline rows', () => {
     ])
   })
 
+  it('waits for a new session transcript instead of showing the terminal screen', async () => {
+    let ready = false
+    installTimeline(path => {
+      if (path.includes('/output')) return response({ content: 'TERMINAL SCREEN' })
+      if (!ready) return { ok: false, status: 404, json: async () => ({ error: { code: 'NOT_FOUND' } }) }
+      return response({ turns: [{ id: 'a1', kind: 'assistant', body: 'First answer' }], through_cursor: 'c1' })
+    })
+    render(html`<${SessionChat} sessionId="one"/>`)
+    await waitFor(() => expect(fetch.mock.calls.some(([p]) => p.includes('/timeline'))).toBe(true))
+    ready = true
+    await screen.findByText('First answer', {}, { timeout: 3500 })
+    expect(screen.queryByText('TERMINAL SCREEN')).toBeNull()
+    expect(fetch.mock.calls.some(([p]) => p.includes('/output'))).toBe(false)
+  })
+
   it('reads the timeline route, follows with since and pages with before', async () => {
     installTimeline(path => {
       if (path.includes('before=older')) return response({ turns: [{ id: 'u0', kind: 'user', body: 'Old question' }] })

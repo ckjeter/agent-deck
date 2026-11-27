@@ -162,7 +162,7 @@ func TestRemoteSessionTimeline_Errors(t *testing.T) {
 		{name: "remote not in the fleet", path: "/api/remotes/other/sessions/remote-1/timeline", status: http.StatusNotFound, code: "NOT_FOUND"},
 		{name: "session not on the remote", path: "/api/remotes/mac/sessions/remote-2/timeline", status: http.StatusNotFound, code: "NOT_FOUND"},
 		{name: "id that reads as an option", path: "/api/remotes/mac/sessions/-rf/timeline", status: http.StatusNotFound, code: "NOT_FOUND"},
-		{name: "unknown action", path: "/api/remotes/mac/sessions/remote-1/output", status: http.StatusNotFound, code: "NOT_FOUND"},
+		{name: "unknown action", path: "/api/remotes/mac/sessions/remote-1/bogus", status: http.StatusNotFound, code: "NOT_FOUND"},
 		{name: "remote offline", path: "/api/remotes/mac/sessions/remote-1/timeline", offline: true, status: http.StatusServiceUnavailable, code: "REMOTE_OFFLINE"},
 		{name: "cursor with a shell character", path: "/api/remotes/mac/sessions/remote-1/timeline?since=a%3Bb", status: http.StatusBadRequest, code: "INVALID_REQUEST"},
 		{name: "before without limit", path: "/api/remotes/mac/sessions/remote-1/timeline?before=YmVmb3Jl", status: http.StatusBadRequest, code: "INVALID_REQUEST"},

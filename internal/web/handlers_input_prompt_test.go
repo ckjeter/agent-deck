@@ -175,7 +175,7 @@ func TestInputPromptUnsupported(t *testing.T) {
 			path := "/api/sessions/chat-session/input-prompt"
 			switch name {
 			case "tool":
-				inst.Tool = "claude"
+				inst.Tool = "gemini"
 			case "ssh":
 				inst.SSHHost = "test-host"
 			case "remote":
@@ -209,5 +209,24 @@ func TestInputPromptBindsResolvedProfileAndSession(t *testing.T) {
 				t.Fatalf("identity not bound: status=%d body=%s keys=%v", rr.Code, rr.Body.String(), target.keys)
 			}
 		})
+	}
+}
+
+const claudeSurveyPane = "⏺ Done.\n\n● How is Claude doing this session? (optional)\n  1: Bad    2: Fine   3: Good   0: Dismiss\n\n────────\n❯ \n────────\n"
+
+func TestInputPromptAnswersClaudeSurvey(t *testing.T) {
+	srv := newChatTestServer(t)
+	inst, _, _, _ := srv.loadChatSession("chat-session")
+	inst.Tool = "claude"
+	target := &inputTarget{panes: []string{claudeSurveyPane, claudeSurveyPane, claudeSurveyPane, "⏺ Done.\n\n────────\n❯ \n────────\n"}}
+	srv.inputPromptTarget = func(*session.Instance) send.CodexApprovalTarget { return target }
+	srv.inputPromptVerify = send.CodexApprovalOptions{VerifyTimeout: time.Millisecond, PollInterval: time.Millisecond}
+	rr := chatRequest(srv, "GET", "/api/sessions/chat-session/input-prompt", "")
+	var prompt inputPromptResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &prompt); err != nil || prompt.Kind != "survey" || len(prompt.Options) != 4 {
+		t.Fatalf("inspect: %d %s %v", rr.Code, rr.Body.String(), err)
+	}
+	if rr := chooseInput(srv, prompt.PromptID, "0"); rr.Code != 200 || len(target.keys) != 1 || target.keys[0] != "0" {
+		t.Fatalf("status=%d body=%s keys=%v", rr.Code, rr.Body.String(), target.keys)
 	}
 }

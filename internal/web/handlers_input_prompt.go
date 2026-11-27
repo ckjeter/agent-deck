@@ -81,8 +81,8 @@ func (s *Server) handleInputPrompt(w http.ResponseWriter, r *http.Request, id st
 	switch {
 	case inst.IsSSH():
 		response.Reason = "remote prompt answering is not supported"
-	case !session.IsCodexCompatible(inst.Tool):
-		response.Reason = "prompt answering currently supports Codex only"
+	case !session.IsCodexCompatible(inst.Tool) && !session.IsClaudeCompatible(inst.Tool):
+		response.Reason = "prompt answering currently supports Codex and Claude's session survey only"
 	default:
 		if s.inputPromptTarget != nil {
 			target = s.inputPromptTarget(inst)
@@ -101,14 +101,18 @@ func (s *Server) handleInputPrompt(w http.ResponseWriter, r *http.Request, id st
 		}
 		return
 	}
-	prompt, err := send.InspectCodexPrompt(target)
+	inspect, answer, kind := send.InspectCodexPrompt, send.ApproveCodexPrompt, "approval"
+	if session.IsClaudeCompatible(inst.Tool) {
+		inspect, answer, kind = send.InspectClaudeSurvey, send.AnswerClaudeSurvey, "survey"
+	}
+	prompt, err := inspect(target)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to inspect input prompt")
 		return
 	}
 	response.Supported = true
 	if prompt != nil {
-		response.Kind = "approval"
+		response.Kind = kind
 		response.PromptID = inputPromptID(profile, inst.ID, prompt.Fingerprint)
 		response.Context, response.Options = prompt.Context, prompt.Options
 		response.Answered = s.inputPromptAttempts[response.PromptID]
@@ -118,7 +122,7 @@ func (s *Server) handleInputPrompt(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	if prompt == nil {
-		writeAPIError(w, http.StatusConflict, "NO_PROMPT", "no active Codex approval prompt found")
+		writeAPIError(w, http.StatusConflict, "NO_PROMPT", "no active prompt found")
 		return
 	}
 	if req.PromptID != response.PromptID || response.Answered {
@@ -133,7 +137,7 @@ func (s *Server) handleInputPrompt(w http.ResponseWriter, r *http.Request, id st
 			break
 		}
 	}
-	if selected == nil || selected.Number < 1 || selected.Number > 9 {
+	if selected == nil || selected.Number < 0 || selected.Number > 9 || (selected.Number == 0 && kind != "survey") {
 		writeAPIError(w, http.StatusBadRequest, ErrCodeBadRequest, "choose once, deny, or a displayed single-digit option")
 		return
 	}
@@ -143,7 +147,7 @@ func (s *Server) handleInputPrompt(w http.ResponseWriter, r *http.Request, id st
 	}
 	opts := s.inputPromptVerify
 	opts.ExpectedFingerprint = prompt.Fingerprint
-	result, err := send.ApproveCodexPrompt(target, strconv.Itoa(selected.Number), opts)
+	result, err := answer(target, strconv.Itoa(selected.Number), opts)
 	if result.KeySent {
 		if s.inputPromptAttempts == nil {
 			s.inputPromptAttempts = make(map[string]bool)
@@ -152,9 +156,9 @@ func (s *Server) handleInputPrompt(w http.ResponseWriter, r *http.Request, id st
 	}
 	if err != nil && !result.KeySent {
 		code, status := ErrCodeInternalError, http.StatusInternalServerError
-		if errors.Is(err, send.ErrNoCodexPrompt) {
+		if errors.Is(err, send.ErrNoCodexPrompt) || errors.Is(err, send.ErrNoClaudeSurvey) {
 			code, status = "NO_PROMPT", http.StatusConflict
-		} else if errors.Is(err, send.ErrCodexPromptChanged) {
+		} else if errors.Is(err, send.ErrCodexPromptChanged) || errors.Is(err, send.ErrClaudeSurveyChanged) {
 			code, status = "PROMPT_CHANGED", http.StatusConflict
 		}
 		writeAPIError(w, status, code, err.Error())
