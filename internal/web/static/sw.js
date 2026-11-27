@@ -1,4 +1,4 @@
-const CACHE_VERSION = "agentdeck-shell-v42"
+const CACHE_VERSION = "agentdeck-shell-v43"
 const SHELL_CACHE = CACHE_VERSION
 const APP_SHELL_URLS = [
   "/",
